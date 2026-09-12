@@ -1,6 +1,7 @@
 import asyncio
 import secrets
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -21,10 +22,23 @@ class TicketIdentity:
     username: str
 
 
+@dataclass(frozen=True)
+class LobbyPlayer:
+    subject: str
+    username: str
+
+
+@dataclass(frozen=True)
+class LobbyChatMessage:
+    username: str
+    text: str
+
+
 @dataclass
 class Connection:
     websocket: WebSocket
     player: PlayerState
+    identity: TicketIdentity
     last_move_at: float = 0
     last_chat_at: float = 0
 
@@ -35,6 +49,7 @@ class ConnectionManager:
     tickets: dict[str, tuple[float, TicketIdentity]] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
+    chat_history: deque[LobbyChatMessage] = field(default_factory=lambda: deque(maxlen=20))
 
     async def issue_ticket(self, identity: TicketIdentity) -> str:
         ticket = secrets.token_urlsafe(32)
@@ -56,6 +71,7 @@ class ConnectionManager:
         player_id = str(uuid4())
         connection = Connection(
             websocket=websocket,
+            identity=identity,
             player=PlayerState(
                 id=player_id,
                 username=identity.username,
@@ -84,6 +100,8 @@ class ConnectionManager:
     async def disconnect(self, player_id: str) -> None:
         async with self.lock:
             connection = self.connections.pop(player_id, None)
+            if not self.connections:
+                self.chat_history.clear()
         if connection is not None:
             task = asyncio.create_task(
                 self.broadcast(
@@ -118,11 +136,41 @@ class ConnectionManager:
         )
         return True
 
+    async def lobby_players(self) -> list[LobbyPlayer]:
+        async with self.lock:
+            return [
+                LobbyPlayer(
+                    subject=connection.identity.subject,
+                    username=connection.player.username,
+                )
+                for connection in self.connections.values()
+            ]
+
+    async def bot_chat(self, username: str, text: str) -> None:
+        async with self.lock:
+            self.chat_history.append(LobbyChatMessage(username=username, text=text))
+        await self.broadcast(
+            {
+                "type": "chat.message",
+                "payload": {
+                    "id": str(uuid4()),
+                    "player_id": "llm",
+                    "username": username,
+                    "text": text,
+                    "sent_at": datetime.now(UTC).isoformat(),
+                },
+            }
+        )
+
     async def chat(self, connection: Connection, text: str) -> bool:
         now = time.monotonic()
         if now - connection.last_chat_at < CHAT_INTERVAL_SECONDS:
             return False
         connection.last_chat_at = now
+        async with self.lock:
+            self.chat_history.append(
+                LobbyChatMessage(username=connection.player.username, text=text)
+            )
         await self.broadcast(
             {
                 "type": "chat.message",
@@ -136,6 +184,10 @@ class ConnectionManager:
             }
         )
         return True
+
+    async def recent_chat(self, limit: int) -> list[LobbyChatMessage]:
+        async with self.lock:
+            return list(self.chat_history)[-limit:]
 
     async def send_error(self, connection: Connection, code: str, message: str) -> None:
         await connection.websocket.send_json(

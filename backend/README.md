@@ -77,3 +77,20 @@ Server messages:
 
 All messages use `{ "type": "...", "payload": { ... } }`. Lobby state and chat are intentionally
 in-memory and assume one FastAPI process for the demo.
+
+## Configurable lobby LLM
+
+When `LLM_ENABLED=true`, every accepted player chat message is followed by a response from the
+configured horror-game character. The model receives the current connected-player list, visible
+jobs, and each connected player's tracked and untracked applications. Failures are logged and do
+not interrupt normal player chat.
+
+The integration uses the common OpenAI-compatible `POST /chat/completions` shape. Set
+`LLM_API_URL`, `LLM_API_KEY`, and `LLM_MODEL` to swap providers without changing code. Endpoints
+that use a different request or response shape can be added behind the `ChatCompletionProvider`
+interface in `app/services/llm.py`. See `.env.example` for the optional timeout, temperature,
+response-token, display-name, and job-context settings.
+
+`LLM_CHAT_HISTORY_LIMIT` controls the rolling chat context independently from
+`LLM_JOB_CONTEXT_LIMIT`. It defaults to the latest five player/model messages, including the
+current player message.

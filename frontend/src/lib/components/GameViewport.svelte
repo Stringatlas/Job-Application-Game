@@ -6,6 +6,8 @@
 	import { MultiplayerClient } from '$lib/game/multiplayer/MultiplayerClient';
 	import type { ChatEntry, ConnectionStatus, PlayerState } from '$lib/game/multiplayer/types';
 
+	const ONBOARDING_SEEN_KEY = 'jag:onboarding-seen';
+
 	interface Props {
 		authenticated: boolean;
 		overlayOpen: boolean;
@@ -22,9 +24,31 @@
 	let messages = $state<ChatEntry[]>([]);
 	let connectionStatus = $state<ConnectionStatus>('disconnected');
 	let chatFocused = $state(false);
+	let chatFocusRequest = $state(0);
+	let showOnboarding = $state(false);
 	let multiplayer: MultiplayerClient | null = null;
 
+	function handleChatShortcut(event: KeyboardEvent): void {
+		if (event.code !== 'Enter' || event.repeat || overlayOpen || !authenticated) return;
+		const target = event.target;
+		if (
+			target instanceof HTMLInputElement ||
+			target instanceof HTMLTextAreaElement ||
+			(target instanceof HTMLElement && target.isContentEditable)
+		) {
+			return;
+		}
+
+		event.preventDefault();
+		chatFocusRequest += 1;
+	}
+
 	onMount(() => {
+		if (sessionStorage.getItem(ONBOARDING_SEEN_KEY) !== 'true') {
+			showOnboarding = true;
+			sessionStorage.setItem(ONBOARDING_SEEN_KEY, 'true');
+		}
+
 		world = new GameWorld(mountNode, {
 			onInteractionChange: (interaction) => (activeInteraction = interaction),
 			onLoginKioskUse: onLoginRequested,
@@ -44,7 +68,9 @@
 		);
 		world.setAuthenticated(authenticated);
 		if (authenticated) multiplayer.start();
+		window.addEventListener('keydown', handleChatShortcut);
 		return () => {
+			window.removeEventListener('keydown', handleChatShortcut);
 			multiplayer?.stop();
 			world?.dispose();
 		};
@@ -59,20 +85,22 @@
 </script>
 
 <div class="viewport" bind:this={mountNode}>
-	<div class="onboarding-pop" role="status" aria-label="W A S D to move. This site plays audio.">
-		<div class="move-hint" aria-hidden="true">
-			<span class="key-row"><kbd>W</kbd></span>
-			<span class="key-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
-			<strong>TO MOVE</strong>
+	{#if showOnboarding}
+		<div class="onboarding-pop" role="status" aria-label="W A S D to move. This site plays audio.">
+			<div class="move-hint" aria-hidden="true">
+				<span class="key-row"><kbd>W</kbd></span>
+				<span class="key-row"><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span>
+				<strong>TO MOVE</strong>
+			</div>
+			<div class="audio-hint" aria-hidden="true">
+				<svg viewBox="0 0 24 24" role="img">
+					<path d="M4 14v-2a8 8 0 0 1 16 0v2" />
+					<path d="M18 19h1a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-1v6ZM6 19H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h1v6Z" />
+				</svg>
+				<span>THIS SITE PLAYS AUDIO</span>
+			</div>
 		</div>
-		<div class="audio-hint" aria-hidden="true">
-			<svg viewBox="0 0 24 24" role="img">
-				<path d="M4 14v-2a8 8 0 0 1 16 0v2" />
-				<path d="M18 19h1a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-1v6ZM6 19H5a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h1v6Z" />
-			</svg>
-			<span>THIS SITE PLAYS AUDIO</span>
-		</div>
-	</div>
+	{/if}
 
 	<div class:visible={pointerLocked && !overlayOpen} class="crosshair" aria-hidden="true"></div>
 
@@ -85,6 +113,7 @@
 			{players}
 			messages={messages}
 			status={connectionStatus}
+			focusRequest={chatFocusRequest}
 			onSendChat={(text) => multiplayer?.sendChat(text) ?? false}
 			onChatFocusChange={(focused) => (chatFocused = focused)}
 		/>

@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import (
@@ -28,6 +29,7 @@ from app.websocket.manager import (
 
 router = APIRouter(tags=["multiplayer"])
 client_message_adapter = TypeAdapter(PlayerMoveMessage | ChatSendMessage)
+logger = logging.getLogger(__name__)
 
 
 def get_connection_manager(websocket: WebSocket) -> ConnectionManager:
@@ -57,6 +59,7 @@ async def create_websocket_ticket(
 async def multiplayer_websocket(
     websocket: WebSocket,
     ticket: Annotated[str, Query(min_length=20, max_length=200)],
+    database: Annotated[AsyncDatabase, Depends(get_ready_database)],
 ) -> None:
     manager = get_connection_manager(websocket)
     identity = await manager.consume_ticket(ticket)
@@ -83,6 +86,25 @@ async def multiplayer_websocket(
                 await manager.send_error(
                     connection, "rate_limited", "Chat message sent too quickly"
                 )
+            else:
+                responder = websocket.app.state.lobby_llm
+                if responder is not None:
+                    try:
+                        response = await responder.respond(
+                            database,
+                            await manager.lobby_players(),
+                            connection.player.username,
+                            message.payload.text,
+                            await manager.recent_chat(
+                                websocket.app.state.settings.llm_chat_history_limit
+                            ),
+                        )
+                        if response:
+                            await manager.bot_chat(
+                                websocket.app.state.settings.llm_display_name, response
+                            )
+                    except Exception:
+                        logger.exception("Lobby LLM failed to respond")
     except WebSocketDisconnect:
         pass
     finally:

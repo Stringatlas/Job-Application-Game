@@ -1,8 +1,8 @@
 import asyncio
 
-from fastapi import Request
 from pymongo import AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
+from starlette.requests import HTTPConnection
 
 from app.config import Settings
 
@@ -11,24 +11,24 @@ def create_mongo_client(settings: Settings) -> AsyncMongoClient:
     return AsyncMongoClient(settings.mongodb_uri, serverSelectionTimeoutMS=5_000)
 
 
-def get_mongo_client(request: Request) -> AsyncMongoClient:
-    return request.app.state.mongo_client
+def get_mongo_client(connection: HTTPConnection) -> AsyncMongoClient:
+    return connection.app.state.mongo_client
 
 
-def get_database(request: Request) -> AsyncDatabase:
-    return request.app.state.database
+def get_database(connection: HTTPConnection) -> AsyncDatabase:
+    return connection.app.state.database
 
 
-async def get_ready_database(request: Request) -> AsyncDatabase:
+async def get_ready_database(connection: HTTPConnection) -> AsyncDatabase:
     """Return the database after lazily ensuring its required indexes exist."""
-    database = get_database(request)
-    if request.app.state.mongo_indexes_ready:
+    database = get_database(connection)
+    if connection.app.state.mongo_indexes_ready:
         return database
 
-    async with request.app.state.mongo_index_lock:
-        if not request.app.state.mongo_indexes_ready:
+    async with connection.app.state.mongo_index_lock:
+        if not connection.app.state.mongo_indexes_ready:
             await ensure_indexes(database)
-            request.app.state.mongo_indexes_ready = True
+            connection.app.state.mongo_indexes_ready = True
     return database
 
 

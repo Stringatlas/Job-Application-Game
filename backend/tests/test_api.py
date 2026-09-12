@@ -748,3 +748,48 @@ def test_websocket_rejects_reused_ticket_and_malformed_messages() -> None:
                 assert exc.code == 1008
     finally:
         app.dependency_overrides.clear()
+
+
+def test_websocket_broadcasts_configured_llm_response() -> None:
+    class FakeLobbyResponder:
+        async def respond(
+            self,
+            _database: object,
+            players: list[object],
+            sender_username: str,
+            text: str,
+            recent_chat: list[object],
+        ) -> str:
+            assert len(players) == 1
+            assert sender_username == "Player_One"
+            assert text == "What remains?"
+            assert len(recent_chat) == 1
+            return "Two unopened doors remain. They have been waiting."
+
+    database = FakeProfileDatabase()
+    database.users.document = {
+        "_id": ObjectId(),
+        "auth0_sub": "auth0|one",
+        "username": "Player_One",
+    }
+    original_responder = app.state.lobby_llm
+    app.state.lobby_llm = FakeLobbyResponder()
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|one")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            ticket = client.post("/api/websocket/ticket").json()["ticket"]
+            with client.websocket_connect(f"/ws?ticket={ticket}") as socket:
+                socket.receive_json()
+                socket.send_json({"type": "chat.send", "payload": {"text": "What remains?"}})
+                assert socket.receive_json()["payload"]["username"] == "Player_One"
+                llm_message = socket.receive_json()
+                assert llm_message["type"] == "chat.message"
+                assert llm_message["payload"]["player_id"] == "llm"
+                assert llm_message["payload"]["username"] == app.state.settings.llm_display_name
+                assert llm_message["payload"]["text"] == (
+                    "Two unopened doors remain. They have been waiting."
+                )
+    finally:
+        app.state.lobby_llm = original_responder
+        app.dependency_overrides.clear()

@@ -6,13 +6,15 @@
 		players: PlayerState[];
 		messages: ChatEntry[];
 		status: ConnectionStatus;
+		focusRequest: number;
 		onSendChat: (text: string) => boolean;
 		onChatFocusChange: (focused: boolean) => void;
 	}
 
-	let { players, messages, status, onSendChat, onChatFocusChange }: Props = $props();
+	let { players, messages, status, focusRequest, onSendChat, onChatFocusChange }: Props = $props();
 	let chatText = $state('');
 	let messageList: HTMLDivElement;
+	let chatInput: HTMLInputElement;
 
 	function submit(event: SubmitEvent): void {
 		event.preventDefault();
@@ -22,6 +24,10 @@
 	$effect(() => {
 		messages.length;
 		void tick().then(() => messageList?.scrollTo({ top: messageList.scrollHeight }));
+	});
+
+	$effect(() => {
+		if (focusRequest > 0) void tick().then(() => chatInput?.focus());
 	});
 </script>
 
@@ -64,6 +70,7 @@
 		<label for="office-chat">Message the office</label>
 		<input
 			id="office-chat"
+			bind:this={chatInput}
 			bind:value={chatText}
 			maxlength="300"
 			placeholder={status === 'connected' ? 'Press enter to chat…' : 'Waiting for connection…'}
