@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: job-application-game-backend
+Version: 0.1.0
+Summary: FastAPI backend for Job Application Game
+Requires-Python: >=3.12
+Requires-Dist: fastapi<1,>=0.116
+Requires-Dist: pyjwt[crypto]<3,>=2.10
+Requires-Dist: pydantic-settings<3,>=2.10
+Requires-Dist: pymongo<5,>=4.13
+Requires-Dist: uvicorn[standard]<1,>=0.35

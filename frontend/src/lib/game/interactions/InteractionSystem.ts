@@ -18,6 +18,9 @@ export interface ActiveInteraction {
 export class InteractionSystem {
 	private readonly interactables = new Map<string, Interactable>();
 	private active: Interactable | null = null;
+	private readonly stableFramesRequired = 6;
+	private candidate: Interactable | null = null;
+	private candidateStableFrames = 0;
 	private readonly targetPosition = new THREE.Vector3();
 	private readonly cameraDirection = new THREE.Vector3();
 	private readonly targetDirection = new THREE.Vector3();
@@ -60,7 +63,16 @@ export class InteractionSystem {
 			closestDistance = distance;
 		}
 
-		this.setActive(closest);
+		// 候选目标必须连续多帧稳定（约 90ms @60fps）才显示提示，
+		// 避免行走中路过交互范围边缘时，提示反复突变/闪烁
+		if (this.candidate !== closest) {
+			this.candidate = closest;
+			this.candidateStableFrames = 0;
+		} else if (closest !== null) {
+			this.candidateStableFrames += 1;
+		}
+		const target = this.candidateStableFrames >= this.stableFramesRequired ? this.candidate : null;
+		this.setActive(target);
 	}
 
 	interact(): void {

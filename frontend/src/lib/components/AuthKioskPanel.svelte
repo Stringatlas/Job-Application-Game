@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
 	import type { AuthState } from '$lib/auth/types';
 
 	interface Props {
@@ -12,6 +13,17 @@
 
 	let { authState, onClose, onLogin, onGoogle, onSignUp, onLogout }: Props = $props();
 	let submitting = $state(false);
+	let accidentalCloseTimer: ReturnType<typeof setTimeout> | null = null; // closes the panel unless the cursor engages it quickly (mis-press E while walking under pointer lock)
+	function scheduleAccidentalClose(): void {
+		if (accidentalCloseTimer) clearTimeout(accidentalCloseTimer);
+		accidentalCloseTimer = setTimeout(() => { accidentalCloseTimer = null; onClose(); }, 220);
+	}
+	function cancelAccidentalClose(): void {
+		if (accidentalCloseTimer) clearTimeout(accidentalCloseTimer);
+		accidentalCloseTimer = null;
+	}
+	onMount(scheduleAccidentalClose);
+	onDestroy(cancelAccidentalClose);
 
 	async function run(action: () => void | Promise<void>) {
 		submitting = true;
@@ -19,7 +31,7 @@
 	}
 </script>
 
-<div class="backdrop" role="presentation">
+<div class="backdrop" role="presentation" onmouseenter={cancelAccidentalClose}>
 	<div class="panel" role="dialog" aria-modal="true" aria-labelledby="kiosk-title">
 		<div class="terminal-bar">
 			<span class="status-light"></span><span>JAG / ACCESS TERMINAL 01</span>

@@ -1,0 +1,5 @@
+fastapi<1,>=0.116
+pyjwt[crypto]<3,>=2.10
+pydantic-settings<3,>=2.10
+pymongo<5,>=4.13
+uvicorn[standard]<1,>=0.35

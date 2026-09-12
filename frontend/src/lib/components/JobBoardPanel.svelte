@@ -33,8 +33,8 @@
 	let postedTitle = $state<string | null>(null);
 
 	onMount(() => {
-		void loadProfile();
-		void loadJobs();
+		return Promise.all([loadProfile(), loadJobs()]);
+		
 	});
 
 	async function loadProfile(): Promise<void> {

@@ -57,6 +57,7 @@
 	.crosshair.visible { opacity: 1; }
 	.interaction-prompt {
 		position: absolute; left: 50%; bottom: 18%; translate: -50% 0; padding: 0.78rem 1.05rem;
+		animation: prompt-in 180ms ease;
 		border: 1px solid #d8cf82; background: #111109;
 		box-shadow: 0 14px 44px rgba(0, 0, 0, 0.72), 0 0 0 3px rgba(17, 17, 9, 0.7); color: #fff8bd;
 		font: 700 0.75rem/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase;

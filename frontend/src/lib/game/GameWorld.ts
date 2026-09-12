@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { InteractionSystem, type ActiveInteraction } from './interactions/InteractionSystem';
 import { FirstPersonController } from './player/FirstPersonController';
-import { createOfficeScene } from './scene/createOfficeScene';
+import { createWorldScene, type DoorHandle } from './scene/createWorldScene';
 
 export interface GameWorldEvents {
 	onInteractionChange: (interaction: ActiveInteraction | null) => void;
@@ -15,20 +15,20 @@ export class GameWorld {
 	private readonly camera: THREE.PerspectiveCamera;
 	private readonly controller: FirstPersonController;
 	private readonly interactions: InteractionSystem;
-	private readonly office: ReturnType<typeof createOfficeScene>;
+	private readonly world: ReturnType<typeof createWorldScene>;
 	private readonly clock = new THREE.Clock();
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
 	private disposed = false;
 	private authenticated = false;
-	private doorOpenProgress = 0;
 
 	constructor(
 		private readonly container: HTMLElement,
 		private readonly events: GameWorldEvents
 	) {
 		this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+		// 1x 渲染即可获得流畅帧率；2x(或屏幕真实 DPR)会增加 2-4 倍像素负载，集显/小机容易掉帧卡顿
+		this.renderer.setPixelRatio(1);
 		this.renderer.shadowMap.enabled = true;
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -41,38 +41,42 @@ export class GameWorld {
 		this.camera = new THREE.PerspectiveCamera(72, 1, 0.08, 80);
 		this.camera.position.set(0, 1.65, 8.15);
 		sessionStorage.removeItem('jag:spawn');
-		this.office = createOfficeScene();
+		this.world = createWorldScene();
 		this.interactions = new InteractionSystem(events.onInteractionChange);
 		this.controller = new FirstPersonController(
 			this.camera,
 			this.renderer.domElement,
-			{ minX: -6.75, maxX: 6.75, minZ: -9, maxZ: 9.5 },
+			this.world.playerBounds,
 			events.onPointerLockChange,
 			this.canOccupy
 		);
 
 		this.interactions.register({
 			id: 'login-kiosk',
-			object: this.office.loginKiosk,
+			object: this.world.loginKiosk,
 			prompt: 'E  Check in',
 			maxDistance: 3.4,
 			minimumFacing: 0.35,
 			onFocusChange: (focused) => {
-				this.office.loginScreenMaterial.emissiveIntensity = focused ? 0.72 : 0.32;
+				this.world.loginScreenMaterial.emissiveIntensity = focused ? 0.72 : 0.32;
 			},
 			onInteract: events.onLoginKioskUse
 		});
 		this.interactions.register({
 			id: 'job-board',
-			object: this.office.jobBoard,
+			object: this.world.jobBoard,
 			prompt: 'E  Open job board',
 			maxDistance: 4.2,
 			minimumFacing: 0.25,
 			onFocusChange: (focused) => {
-				this.office.jobBoardMaterial.emissiveIntensity = focused ? 0.24 : 0.08;
+				this.world.jobBoardMaterial.emissiveIntensity = focused ? 0.24 : 0.08;
 			},
 			onInteract: events.onJobBoardUse
 		});
+
+		for (const door of Object.values(this.world.doors)) {
+			this.interactions.register(this.makeDoorInteractable(door));
+		}
 
 		this.renderer.domElement.addEventListener('click', this.handleCanvasClick);
 		window.addEventListener('keydown', this.handleInteractionKey);
@@ -80,6 +84,31 @@ export class GameWorld {
 		this.resizeObserver.observe(this.container);
 		this.resize();
 		this.animate();
+	}
+
+	private makeDoorInteractable(door: DoorHandle) {
+		return {
+			id: `door-${door.id}`,
+			object: door.leaf,
+			prompt: this.doorPrompt(door),
+			maxDistance: 3.4,
+			minimumFacing: 0.2,
+			onInteract: () => this.toggleDoor(door.id)
+		};
+	}
+
+	private doorPrompt(door: DoorHandle): string {
+		if (door.locked && !this.authenticated) return 'E Open (needs pass)';
+		return door.open ? 'E Close door' : 'E Open door';
+	}
+
+	private toggleDoor(id: string): void {
+		const door = this.world.doors[id];
+		if (!door) return;
+		if (door.locked && !this.authenticated) return;
+		door.open = !door.open;
+		door.toggleBlocked(!door.open);
+		this.interactions.updatePrompt(`door-${id}`, this.doorPrompt(door));
 	}
 
 	requestPointerLock(): void {
@@ -93,6 +122,10 @@ export class GameWorld {
 	setAuthenticated(authenticated: boolean): void {
 		this.authenticated = authenticated;
 		this.interactions.updatePrompt('login-kiosk', authenticated ? 'E  View player pass' : 'E  Check in');
+		const interviewDoor = this.world.doors['interview'];
+		if (interviewDoor) {
+			this.interactions.updatePrompt(`door-interview`, this.doorPrompt(interviewDoor));
+		}
 	}
 
 	dispose(): void {
@@ -104,7 +137,7 @@ export class GameWorld {
 		this.renderer.domElement.removeEventListener('click', this.handleCanvasClick);
 		this.controller.dispose();
 		this.interactions.dispose();
-		this.office.dispose();
+		this.world.dispose();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
 	}
@@ -115,17 +148,14 @@ export class GameWorld {
 		const delta = this.clock.getDelta();
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
-		const doorTarget = this.authenticated ? 1 : 0;
-		this.doorOpenProgress = THREE.MathUtils.damp(
-			this.doorOpenProgress,
-			doorTarget,
-			4.5,
-			delta
-		);
-		this.office.closetDoor.rotation.y = -this.doorOpenProgress * Math.PI * 0.52;
+		for (const door of Object.values(this.world.doors)) {
+			const target = door.open ? 1 : 0;
+			door.progress = THREE.MathUtils.damp(door.progress, target, 6, delta);
+			door.leaf.rotation.y = -door.progress * Math.PI * 0.52;
+		}
 		const pulse = 1 + Math.sin(this.clock.elapsedTime * 2.1) * 0.006;
-		this.office.loginKiosk.scale.setScalar(pulse);
-		this.renderer.render(this.office.scene, this.camera);
+		this.world.loginKiosk.scale.setScalar(pulse);
+		this.renderer.render(this.world.scene, this.camera);
 	};
 
 	private resize = (): void => {
@@ -139,22 +169,18 @@ export class GameWorld {
 	private handleCanvasClick = (): void => this.controller.requestPointerLock();
 
 	private canOccupy = (position: THREE.Vector3): boolean => {
-		if (position.z > 5.5 && Math.abs(position.x) > 2.08) return false;
-		if (position.z > 4.94 && position.z < 5.52 && Math.abs(position.x) > 0.72) return false;
-		if (
-			this.doorOpenProgress < 0.82 &&
-			position.z > 5.12 &&
-			position.z < 5.52 &&
-			Math.abs(position.x) <= 0.95
-		) {
-			return false;
+		for (const wall of this.world.airwalls) {
+			if (!wall.active) continue;
+			if (
+				position.x >= wall.xMin &&
+				position.x <= wall.xMax &&
+				position.z >= wall.zMin &&
+				position.z <= wall.zMax
+			) {
+				return false;
+			}
 		}
-		const hitsDesk =
-			position.x > 1.15 &&
-			position.x < 5.05 &&
-			position.z > -3.5 &&
-			position.z < -1.3;
-		return !hitsDesk;
+		return true;
 	};
 
 	private handleInteractionKey = (event: KeyboardEvent): void => {
