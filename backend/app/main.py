@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,10 +12,19 @@ from app.services.llm import create_lobby_llm_responder
 from app.websocket.manager import ConnectionManager
 from app.websocket.routes import router as websocket_router
 
+logger = logging.getLogger("uvicorn.error")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    logger.info(
+        "Lobby LLM startup: enabled=%s key_configured=%s model=%s endpoint=%s",
+        settings.llm_enabled,
+        bool(settings.llm_api_key),
+        settings.llm_model,
+        settings.llm_api_url,
+    )
     client = create_mongo_client(settings)
     app.state.mongo_client = client
     app.state.database = client[settings.mongodb_database]

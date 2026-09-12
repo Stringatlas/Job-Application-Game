@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from dataclasses import dataclass
 from typing import Protocol, TypedDict
 
@@ -7,6 +9,8 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.config import Settings
 from app.websocket.manager import LobbyChatMessage, LobbyPlayer
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class ChatMessage(TypedDict):
@@ -34,6 +38,12 @@ class OpenAICompatibleChatProvider:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
+        started_at = time.monotonic()
+        logger.info(
+            "Lobby LLM outbound request: model=%s timeout_seconds=%s",
+            self.model,
+            self.timeout_seconds,
+        )
         async with httpx2.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(
                 self.api_url,
@@ -45,6 +55,17 @@ class OpenAICompatibleChatProvider:
                     "max_tokens": self.max_tokens,
                 },
             )
+            logger.info(
+                "Lobby LLM HTTP response: status=%s elapsed_ms=%d",
+                response.status_code,
+                (time.monotonic() - started_at) * 1_000,
+            )
+            if response.status_code >= 400:
+                logger.error(
+                    "Lobby LLM provider error: status=%s body=%s",
+                    response.status_code,
+                    response.text[:500],
+                )
             response.raise_for_status()
             payload = response.json()
 
@@ -90,6 +111,14 @@ class LobbyLlmResponder:
         chat_context = [
             {"username": message.username, "text": message.text} for message in (recent_chat or [])
         ]
+        visible_jobs = context["visible_jobs"]
+        job_count = len(visible_jobs) if isinstance(visible_jobs, list) else 0
+        logger.info(
+            "Lobby LLM context ready: players=%d jobs=%d recent_messages=%d",
+            len(players),
+            job_count,
+            len(chat_context),
+        )
         messages: list[ChatMessage] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {

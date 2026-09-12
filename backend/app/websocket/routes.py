@@ -29,7 +29,7 @@ from app.websocket.manager import (
 
 router = APIRouter(tags=["multiplayer"])
 client_message_adapter = TypeAdapter(PlayerMoveMessage | ChatSendMessage)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 def get_connection_manager(websocket: WebSocket) -> ConnectionManager:
@@ -89,6 +89,10 @@ async def multiplayer_websocket(
             else:
                 responder = websocket.app.state.lobby_llm
                 if responder is not None:
+                    logger.info(
+                        "Lobby LLM chat accepted: sender=%s",
+                        connection.player.username,
+                    )
                     try:
                         response = await responder.respond(
                             database,
@@ -103,8 +107,15 @@ async def multiplayer_websocket(
                             await manager.bot_chat(
                                 websocket.app.state.settings.llm_display_name, response
                             )
+                            logger.info(
+                                "Lobby LLM response broadcast: sender=%s characters=%d",
+                                connection.player.username,
+                                len(response),
+                            )
                     except Exception:
                         logger.exception("Lobby LLM failed to respond")
+                else:
+                    logger.warning("Lobby LLM chat skipped: responder is disabled")
     except WebSocketDisconnect:
         pass
     finally:
