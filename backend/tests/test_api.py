@@ -11,7 +11,7 @@ from pytest import MonkeyPatch
 from app.auth.dependencies import get_current_user
 from app.config import get_settings
 from app.db.mongodb import ensure_indexes, get_mongo_client, get_ready_database
-from app.main import app
+from app.main import app, create_app
 from app.models.job import JobListingCreate
 from app.models.user import AuthenticatedUser
 from app.services.rate_limit import RateLimitExceeded, consume_job_post
@@ -145,6 +145,31 @@ def test_database_health() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "job_application_game"}
+
+
+def test_cors_allows_each_configured_frontend_origin(monkeypatch: MonkeyPatch) -> None:
+    origins = ["http://localhost:5173", "https://the-job-rooms.vercel.app"]
+    monkeypatch.setenv(
+        "FRONTEND_ORIGINS",
+        '["http://localhost:5173","https://the-job-rooms.vercel.app/"]',
+    )
+    get_settings.cache_clear()
+    try:
+        application = create_app()
+        with TestClient(application) as client:
+            for origin in origins:
+                response = client.options(
+                    "/api/jobs",
+                    headers={
+                        "Origin": origin,
+                        "Access-Control-Request-Method": "GET",
+                        "Access-Control-Request-Headers": "authorization",
+                    },
+                )
+                assert response.status_code == 200
+                assert response.headers["access-control-allow-origin"] == origin
+    finally:
+        get_settings.cache_clear()
 
 
 def test_database_indexes_enforce_unique_references() -> None:
