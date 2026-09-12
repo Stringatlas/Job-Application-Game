@@ -5,6 +5,7 @@ description = "FastAPI backend for Job Application Game"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.116,<1",
+    "httpx2>=2,<3",
     "pyjwt[crypto]>=2.10,<3",
     "pydantic-settings>=2.10,<3",
     "pymongo>=4.13,<5",
@@ -13,7 +14,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx2>=2,<3",
     "pytest>=8.4,<10",
     "ruff>=0.12,<1",
 ]
