@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     mongodb_database: str = "job_application_game"
     auth0_domain: str
     auth0_audience: str
-    frontend_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    frontend_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173", "https://the-job-rooms.vercel.app"])
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
