@@ -69,7 +69,7 @@
 </script>
 
 <svelte:head>
-	<title>Job Application Game</title>
+	<title>The Job Rooms</title>
 	<meta name="description" content="Explore a multiplayer office and discover jobs with other players." />
 </svelte:head>
 

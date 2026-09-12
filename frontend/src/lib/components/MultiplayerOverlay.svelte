@@ -83,9 +83,9 @@
 	}
 	.presence summary { display: flex; align-items: center; gap: 0.5rem; cursor: default; list-style: none; outline: none; }
 	.presence summary::-webkit-details-marker { display: none; }
-	.presence summary:focus-visible { outline: 2px solid #8af0bd; outline-offset: 5px; }
+	.presence summary:focus-visible { outline: 2px solid #d8cf82; outline-offset: 5px; }
 	.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #777568; box-shadow: 0 0 0 3px rgba(119, 117, 104, 0.12); }
-	.status-dot.online { background: #77e5a8; box-shadow: 0 0 0 3px rgba(119, 229, 168, 0.14); }
+	.status-dot.online { background: #cfc36f; box-shadow: 0 0 0 3px rgba(207, 195, 111, 0.14); }
 	.player-panel {
 		position: absolute; top: calc(100% + 0.45rem); right: 0; width: 210px; padding: 0.75rem;
 		border: 1px solid rgba(216, 207, 130, 0.35); border-radius: 4px; background: rgba(9, 10, 7, 0.96);
@@ -96,7 +96,7 @@
 	.player-panel p { margin: 0 0 0.55rem; color: #8d8c77; font-size: 0.61rem; text-transform: uppercase; }
 	.player-panel ul { display: grid; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
 	.player-panel li { overflow: hidden; display: flex; gap: 0.5rem; align-items: center; color: #f7f3d2; text-overflow: ellipsis; white-space: nowrap; }
-	.player-panel li span { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #77e5a8; }
+	.player-panel li span { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: #cfc36f; }
 	.empty { color: #8d8c77; }
 	.chat {
 		position: absolute; left: 1rem; bottom: 1rem; z-index: 4; width: min(350px, calc(100vw - 2rem)); overflow: hidden;
@@ -113,7 +113,7 @@
 	.chat label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 	.chat input { width: 100%; border: 0; padding: 0.68rem 0.75rem; outline: 0; background: rgba(0, 0, 0, 0.24); color: #fffde8; font: 0.72rem var(--font-mono); }
 	.chat input::placeholder { color: #656559; }
-	.chat input:focus { box-shadow: inset 0 0 0 1px rgba(119, 229, 168, 0.45); }
+	.chat input:focus { box-shadow: inset 0 0 0 1px rgba(207, 195, 111, 0.45); }
 	.chat input:disabled { cursor: not-allowed; }
 	@media (max-width: 520px) { .messages { height: 90px; } }
 </style>

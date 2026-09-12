@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { InteractionSystem, type ActiveInteraction } from './interactions/InteractionSystem';
 import { FirstPersonController } from './player/FirstPersonController';
-import { createOfficeScene } from './scene/createOfficeScene';
+import {
+	createOfficeScene,
+	DOORWAY_WIDTH,
+	OFFICE_BOUNDS,
+	SECURE_DOOR_Z
+} from './scene/createOfficeScene';
+import { HorrorPostProcessing } from './rendering/HorrorPostProcessing';
 import type { PlayerState, Vector3State } from './multiplayer/types';
 
 interface RemoteAvatar {
@@ -23,6 +29,7 @@ export class GameWorld {
 	private readonly controller: FirstPersonController;
 	private readonly interactions: InteractionSystem;
 	private readonly office: ReturnType<typeof createOfficeScene>;
+	private readonly postProcessing: HorrorPostProcessing;
 	private readonly clock = new THREE.Clock();
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
@@ -41,7 +48,7 @@ export class GameWorld {
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-		this.renderer.toneMappingExposure = 1.1;
+		this.renderer.toneMappingExposure = 1.20;
 		this.renderer.domElement.className = 'game-canvas';
 		this.renderer.domElement.setAttribute('aria-label', 'First-person office scene');
 		this.container.appendChild(this.renderer.domElement);
@@ -50,11 +57,12 @@ export class GameWorld {
 		this.camera.position.set(0, 1.65, 8.15);
 		sessionStorage.removeItem('jag:spawn');
 		this.office = createOfficeScene();
+		this.postProcessing = new HorrorPostProcessing(this.renderer, this.office.scene, this.camera);
 		this.interactions = new InteractionSystem(events.onInteractionChange);
 		this.controller = new FirstPersonController(
 			this.camera,
 			this.renderer.domElement,
-			{ minX: -6.75, maxX: 6.75, minZ: -9, maxZ: 9.5 },
+			OFFICE_BOUNDS,
 			events.onPointerLockChange,
 			this.canOccupy
 		);
@@ -163,6 +171,7 @@ export class GameWorld {
 		this.controller.dispose();
 		this.interactions.dispose();
 		this.setRemotePlayers([], null);
+		this.postProcessing.dispose();
 		this.office.dispose();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
@@ -174,6 +183,7 @@ export class GameWorld {
 		const delta = this.clock.getDelta();
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
+		this.office.updateLights(this.clock.elapsedTime);
 		const doorTarget = this.authenticated ? 1 : 0;
 		this.doorOpenProgress = THREE.MathUtils.damp(
 			this.doorOpenProgress,
@@ -193,7 +203,7 @@ export class GameWorld {
 				delta
 			);
 		}
-		this.renderer.render(this.office.scene, this.camera);
+		this.postProcessing.render(this.clock.elapsedTime);
 	};
 
 	private resize = (): void => {
@@ -202,18 +212,26 @@ export class GameWorld {
 		this.camera.aspect = width / height;
 		this.camera.updateProjectionMatrix();
 		this.renderer.setSize(width, height, false);
+		this.postProcessing.setSize(width, height, this.renderer.getPixelRatio());
 	};
 
 	private handleCanvasClick = (): void => this.controller.requestPointerLock();
 
 	private canOccupy = (position: THREE.Vector3): boolean => {
-		if (position.z > 5.5 && Math.abs(position.x) > 2.08) return false;
-		if (position.z > 4.94 && position.z < 5.52 && Math.abs(position.x) > 0.72) return false;
+		const playerRadius = 0.28;
+		const hitsWall = this.office.wallColliders.some((wall) =>
+			position.x + playerRadius > wall.minX &&
+			position.x - playerRadius < wall.maxX &&
+			position.z + playerRadius > wall.minZ &&
+			position.z - playerRadius < wall.maxZ
+		);
+		if (hitsWall) return false;
+
 		if (
 			this.doorOpenProgress < 0.82 &&
-			position.z > 5.12 &&
-			position.z < 5.52 &&
-			Math.abs(position.x) <= 0.95
+			position.z + playerRadius > SECURE_DOOR_Z &&
+			position.z - playerRadius < SECURE_DOOR_Z + 0.31 &&
+			Math.abs(position.x) < DOORWAY_WIDTH / 2 + playerRadius
 		) {
 			return false;
 		}
