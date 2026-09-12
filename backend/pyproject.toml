@@ -1,0 +1,30 @@
+[project]
+name = "job-application-game-backend"
+version = "0.1.0"
+description = "FastAPI backend for Job Application Game"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116,<1",
+    "pyjwt[crypto]>=2.10,<3",
+    "pydantic-settings>=2.10,<3",
+    "pymongo>=4.13,<5",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2,<3",
+    "pytest>=8.4,<10",
+    "ruff>=0.12,<1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
