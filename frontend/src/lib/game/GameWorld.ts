@@ -124,6 +124,9 @@ export class GameWorld {
 						object.geometry.dispose();
 						const materials = Array.isArray(object.material) ? object.material : [object.material];
 						materials.forEach((material) => material.dispose());
+					} else if (object instanceof THREE.Sprite) {
+						object.material.map?.dispose();
+						object.material.dispose();
 					}
 				});
 				this.remoteAvatars.delete(id);
@@ -134,7 +137,7 @@ export class GameWorld {
 			if (player.id === selfId) continue;
 			let avatar = this.remoteAvatars.get(player.id);
 			if (!avatar) {
-				const group = this.createRemoteAvatar(player.id);
+				const group = this.createRemoteAvatar(player.id, player.username);
 				group.position.set(player.position.x, 0, player.position.z);
 				group.rotation.y = player.rotation;
 				this.office.scene.add(group);
@@ -228,7 +231,7 @@ export class GameWorld {
 		}
 	};
 
-	private createRemoteAvatar(id: string): THREE.Group {
+	private createRemoteAvatar(id: string, username: string): THREE.Group {
 		const hue = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
 		const material = new THREE.MeshStandardMaterial({
 			color: new THREE.Color(`hsl(${hue}, 48%, 45%)`),
@@ -244,7 +247,40 @@ export class GameWorld {
 		head.castShadow = true;
 		const visor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.06), darkMaterial);
 		visor.position.set(0, 1.65, -0.21);
-		group.add(body, head, visor);
+		const nameLabel = this.createUsernameLabel(username);
+		nameLabel.position.y = 2.15;
+		group.add(body, head, visor, nameLabel);
 		return group;
+	}
+
+	private createUsernameLabel(username: string): THREE.Sprite {
+		const canvas = document.createElement('canvas');
+		canvas.width = 512;
+		canvas.height = 128;
+		const context = canvas.getContext('2d');
+		if (!context) {
+			throw new Error('Unable to create username label');
+		}
+
+		let fontSize = 64;
+		context.font = `600 ${fontSize}px system-ui, sans-serif`;
+		while (context.measureText(username).width > canvas.width - 64 && fontSize > 30) {
+			fontSize -= 2;
+			context.font = `600 ${fontSize}px system-ui, sans-serif`;
+		}
+		context.fillStyle = '#f5f7ef';
+		context.textAlign = 'center';
+		context.textBaseline = 'middle';
+		context.fillText(username, canvas.width / 2, canvas.height / 2 + 2, canvas.width - 64);
+
+		const texture = new THREE.CanvasTexture(canvas);
+		texture.colorSpace = THREE.SRGBColorSpace;
+		texture.minFilter = THREE.LinearFilter;
+		const label = new THREE.Sprite(
+			new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
+		);
+		label.scale.set(1.6, 0.4, 1);
+		label.center.set(0.5, 0);
+		return label;
 	}
 }
