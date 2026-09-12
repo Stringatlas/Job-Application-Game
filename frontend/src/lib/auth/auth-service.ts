@@ -16,6 +16,7 @@ const LOGIN_RETURN_STATE: LoginReturnState = {
 	returnTo: '/',
 	spawn: 'login-kiosk'
 };
+const PENDING_USERNAME_KEY = 'jag:pending-username';
 
 export class AuthService {
 	private client: Auth0Client | null = null;
@@ -53,8 +54,17 @@ export class AuthService {
 		await this.login({ authorizationParams: { connection: 'google-oauth2' } });
 	}
 
-	async signUp(): Promise<void> {
+	async signUp(username: string): Promise<void> {
+		sessionStorage.setItem(PENDING_USERNAME_KEY, username);
 		await this.login({ authorizationParams: { screen_hint: 'signup' } });
+	}
+
+	getPendingUsername(): string | null {
+		return sessionStorage.getItem(PENDING_USERNAME_KEY);
+	}
+
+	clearPendingUsername(): void {
+		sessionStorage.removeItem(PENDING_USERNAME_KEY);
 	}
 
 	async logout(): Promise<void> {

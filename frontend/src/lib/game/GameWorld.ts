@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { InteractionSystem, type ActiveInteraction } from './interactions/InteractionSystem';
 import { FirstPersonController } from './player/FirstPersonController';
 import { createOfficeScene } from './scene/createOfficeScene';
+import type { PlayerState, Vector3State } from './multiplayer/types';
+
+interface RemoteAvatar {
+	group: THREE.Group;
+	targetPosition: THREE.Vector3;
+	targetRotation: number;
+}
 
 export interface GameWorldEvents {
 	onInteractionChange: (interaction: ActiveInteraction | null) => void;
@@ -22,6 +29,7 @@ export class GameWorld {
 	private disposed = false;
 	private authenticated = false;
 	private doorOpenProgress = 0;
+	private readonly remoteAvatars = new Map<string, RemoteAvatar>();
 
 	constructor(
 		private readonly container: HTMLElement,
@@ -95,6 +103,53 @@ export class GameWorld {
 		this.interactions.updatePrompt('login-kiosk', authenticated ? 'E  View player pass' : 'E  Check in');
 	}
 
+	getLocalTransform(): { position: Vector3State; rotation: number } {
+		return {
+			position: {
+				x: Number(this.camera.position.x.toFixed(3)),
+				y: Number(this.camera.position.y.toFixed(3)),
+				z: Number(this.camera.position.z.toFixed(3))
+			},
+			rotation: Number(THREE.MathUtils.euclideanModulo(this.camera.rotation.y + Math.PI, Math.PI * 2).toFixed(3)) - Math.PI
+		};
+	}
+
+	setRemotePlayers(players: PlayerState[], selfId: string | null): void {
+		const remoteIds = new Set(players.filter((player) => player.id !== selfId).map((player) => player.id));
+		for (const [id, avatar] of this.remoteAvatars) {
+			if (!remoteIds.has(id)) {
+				this.office.scene.remove(avatar.group);
+				avatar.group.traverse((object) => {
+					if (object instanceof THREE.Mesh) {
+						object.geometry.dispose();
+						const materials = Array.isArray(object.material) ? object.material : [object.material];
+						materials.forEach((material) => material.dispose());
+					}
+				});
+				this.remoteAvatars.delete(id);
+			}
+		}
+
+		for (const player of players) {
+			if (player.id === selfId) continue;
+			let avatar = this.remoteAvatars.get(player.id);
+			if (!avatar) {
+				const group = this.createRemoteAvatar(player.id);
+				group.position.set(player.position.x, 0, player.position.z);
+				group.rotation.y = player.rotation;
+				this.office.scene.add(group);
+				avatar = {
+					group,
+					targetPosition: new THREE.Vector3(player.position.x, 0, player.position.z),
+					targetRotation: player.rotation
+				};
+				this.remoteAvatars.set(player.id, avatar);
+			}
+			avatar.targetPosition.set(player.position.x, Math.max(0, player.position.y - 1.65), player.position.z);
+			avatar.targetRotation = player.rotation;
+		}
+	}
+
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
@@ -104,6 +159,7 @@ export class GameWorld {
 		this.renderer.domElement.removeEventListener('click', this.handleCanvasClick);
 		this.controller.dispose();
 		this.interactions.dispose();
+		this.setRemotePlayers([], null);
 		this.office.dispose();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
@@ -125,6 +181,15 @@ export class GameWorld {
 		this.office.closetDoor.rotation.y = -this.doorOpenProgress * Math.PI * 0.52;
 		const pulse = 1 + Math.sin(this.clock.elapsedTime * 2.1) * 0.006;
 		this.office.loginKiosk.scale.setScalar(pulse);
+		for (const avatar of this.remoteAvatars.values()) {
+			avatar.group.position.lerp(avatar.targetPosition, 1 - Math.exp(-12 * delta));
+			avatar.group.rotation.y = THREE.MathUtils.damp(
+				avatar.group.rotation.y,
+				avatar.targetRotation,
+				12,
+				delta
+			);
+		}
 		this.renderer.render(this.office.scene, this.camera);
 	};
 
@@ -162,4 +227,24 @@ export class GameWorld {
 			this.interactions.interact();
 		}
 	};
+
+	private createRemoteAvatar(id: string): THREE.Group {
+		const hue = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
+		const material = new THREE.MeshStandardMaterial({
+			color: new THREE.Color(`hsl(${hue}, 48%, 45%)`),
+			roughness: 0.82
+		});
+		const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x24271f, roughness: 0.9 });
+		const group = new THREE.Group();
+		const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.74, 4, 8), material);
+		body.position.y = 0.84;
+		body.castShadow = true;
+		const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8), material.clone());
+		head.position.y = 1.62;
+		head.castShadow = true;
+		const visor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.06), darkMaterial);
+		visor.position.set(0, 1.65, -0.21);
+		group.add(body, head, visor);
+		return group;
+	}
 }

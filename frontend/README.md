@@ -11,8 +11,8 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`, click the scene to capture the mouse, move with `WASD`, and interact
-with the kiosk using `E`.
+Open `http://localhost:5173`, click the scene to capture the mouse, move with `WASD`, hold `Ctrl`
+to sprint, and interact with the kiosk using `E`.
 
 ## Architecture
 

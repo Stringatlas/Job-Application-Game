@@ -14,7 +14,7 @@ from app.models.user import (
     JobApplication,
     JobApplicationCreate,
     UserProfile,
-    UserProfileUpdate,
+    UserProfileCreate,
 )
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -57,33 +57,33 @@ async def get_my_profile(
     return _profile_from_document(document)
 
 
-@router.put("/me/profile", response_model=UserProfile)
-async def upsert_my_profile(
-    payload: UserProfileUpdate,
+@router.post("/me/profile", response_model=UserProfile, status_code=status.HTTP_201_CREATED)
+async def create_my_profile(
+    payload: UserProfileCreate,
     user: CurrentUser,
     database: Annotated[AsyncDatabase, Depends(get_ready_database)],
 ) -> UserProfile:
     now = datetime.now(UTC)
+    document = {
+        "auth0_sub": user.sub,
+        "username": payload.username,
+        "username_key": payload.username.casefold(),
+        "display_name": payload.display_name,
+        "created_at": now,
+        "updated_at": now,
+    }
     try:
-        document = await database.users.find_one_and_update(
-            {"auth0_sub": user.sub},
-            {
-                "$set": {
-                    "username": payload.username,
-                    "username_key": payload.username.casefold(),
-                    "display_name": payload.display_name,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {"created_at": now},
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
+        result = await database.users.insert_one(document)
     except DuplicateKeyError as exc:
+        if await database.users.find_one({"auth0_sub": user.sub}) is not None:
+            detail = "Profile already exists"
+        else:
+            detail = "Username is already taken"
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already taken",
+            detail=detail,
         ) from exc
+    document["_id"] = result.inserted_id
     return _profile_from_document(document)
 
 

@@ -5,21 +5,18 @@
 		createJobListing,
 		deleteJobListing,
 		getMyJobRating,
-		getMyProfile,
 		listJobListings,
 		listMyJobListings,
 		rateJobListing,
-		saveMyProfile,
 		updateJobListing
 	} from '$lib/api/client';
 	import type { JobListing, JobListingCreate } from '$lib/api/types';
 
 	interface Props {
-		suggestedDisplayName?: string | null;
 		onClose: () => void;
 	}
 
-	let { suggestedDisplayName = null, onClose }: Props = $props();
+	let { onClose }: Props = $props();
 	let view = $state<'browse' | 'mine' | 'post'>('browse');
 	let jobs = $state<JobListing[]>([]);
 	let myJobs = $state<JobListing[]>([]);
@@ -27,8 +24,6 @@
 	let myJobsLoading = $state(true);
 	let jobsError = $state<string | null>(null);
 	let myJobsError = $state<string | null>(null);
-	let profileState = $state<'loading' | 'ready' | 'missing'>('loading');
-	let username = $state('');
 	let title = $state('');
 	let company = $state('');
 	let location = $state('');
@@ -49,25 +44,9 @@
 	let ratingError = $state<string | null>(null);
 
 	onMount(() => {
-		void loadProfile();
 		void loadJobs();
 		void loadMyJobs();
 	});
-
-	async function loadProfile(): Promise<void> {
-		try {
-			const profile = await getMyProfile();
-			if (profile) {
-				username = profile.username;
-				profileState = 'ready';
-			} else {
-				profileState = 'missing';
-			}
-		} catch (loadError) {
-			error = readableError(loadError);
-			profileState = 'missing';
-		}
-	}
 
 	async function loadJobs(): Promise<void> {
 		jobsLoading = true;
@@ -142,11 +121,6 @@
 		successMessage = null;
 		submitting = true;
 		try {
-			if (profileState === 'missing') {
-				await saveMyProfile(username, suggestedDisplayName?.slice(0, 80) ?? null);
-				profileState = 'ready';
-			}
-
 			const listing: JobListingCreate = {
 				title,
 				company,
@@ -226,10 +200,6 @@
 		ratingError = null;
 		ratingSubmitting = true;
 		try {
-			if (profileState === 'missing') {
-				await saveMyProfile(username, suggestedDisplayName?.slice(0, 80) ?? null);
-				profileState = 'ready';
-			}
 			const updated = await rateJobListing(ratingJob.id, {
 				stars: ratingStars,
 				stale: ratingStale
@@ -327,56 +297,45 @@
 		<form onsubmit={submit}>
 			<p class="intro">{editingJobId ? 'Update your listing on the office board.' : 'Share a direct employer listing with everyone in the office.'}</p>
 
-			{#if profileState === 'loading'}
-				<p class="notice">Loading your player profile…</p>
-			{:else}
-				{#if profileState === 'missing'}
-					<label class="full">
-						<span>Choose your username <small>Required once</small></span>
-						<input bind:value={username} required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" placeholder="campus_recruit" />
-					</label>
-				{/if}
+			<div class="fields">
+				<label>
+					<span>Role</span>
+					<input bind:value={title} required maxlength="120" placeholder="Software Engineer Intern" />
+				</label>
+				<label>
+					<span>Company</span>
+					<input bind:value={company} required maxlength="120" placeholder="Roblox" />
+				</label>
+				<label>
+					<span>Location</span>
+					<input bind:value={location} required maxlength="120" placeholder="San Mateo, CA or Remote" />
+				</label>
+				<label class="remote-toggle">
+					<input type="checkbox" bind:checked={remote} />
+					<span>Remote-friendly</span>
+				</label>
+				<label class="full">
+					<span>Employer application URL</span>
+					<input type="url" bind:value={externalUrl} required maxlength="2048" pattern="https://.*" title="Use a secure https:// URL" placeholder="https://company.com/careers/job" />
+				</label>
+				<label class="full">
+					<span>Description <small>Optional</small></span>
+					<textarea bind:value={description} maxlength="5000" rows="4" placeholder="A short, plain-text summary of the role"></textarea>
+				</label>
+				<label class="full">
+					<span>Tags <small>Optional, comma-separated</small></span>
+					<input bind:value={tags} maxlength="400" placeholder="internship, software, summer-2027" />
+				</label>
+			</div>
 
-				<div class="fields">
-					<label>
-						<span>Role</span>
-						<input bind:value={title} required maxlength="120" placeholder="Software Engineer Intern" />
-					</label>
-					<label>
-						<span>Company</span>
-						<input bind:value={company} required maxlength="120" placeholder="Roblox" />
-					</label>
-					<label>
-						<span>Location</span>
-						<input bind:value={location} required maxlength="120" placeholder="San Mateo, CA or Remote" />
-					</label>
-					<label class="remote-toggle">
-						<input type="checkbox" bind:checked={remote} />
-						<span>Remote-friendly</span>
-					</label>
-					<label class="full">
-						<span>Employer application URL</span>
-						<input type="url" bind:value={externalUrl} required maxlength="2048" pattern="https://.*" title="Use a secure https:// URL" placeholder="https://company.com/careers/job" />
-					</label>
-					<label class="full">
-						<span>Description <small>Optional</small></span>
-						<textarea bind:value={description} maxlength="5000" rows="4" placeholder="A short, plain-text summary of the role"></textarea>
-					</label>
-					<label class="full">
-						<span>Tags <small>Optional, comma-separated</small></span>
-						<input bind:value={tags} maxlength="400" placeholder="internship, software, summer-2027" />
-					</label>
+			{#if error}<p class="error" role="alert">{error}</p>{/if}
+			<footer>
+				<p>Limit: 5 submissions per hour</p>
+				<div>
+					<button class="secondary" type="button" onclick={() => editingJobId ? (view = 'mine') : onClose()} disabled={submitting}>Cancel</button>
+					<button class="primary" type="submit" disabled={submitting}>{submitting ? (editingJobId ? 'Saving…' : 'Posting…') : (editingJobId ? 'Save changes' : 'Post listing')}</button>
 				</div>
-
-				{#if error}<p class="error" role="alert">{error}</p>{/if}
-				<footer>
-					<p>Limit: 5 submissions per hour</p>
-					<div>
-						<button class="secondary" type="button" onclick={() => editingJobId ? (view = 'mine') : onClose()} disabled={submitting}>Cancel</button>
-						<button class="primary" type="submit" disabled={submitting}>{submitting ? (editingJobId ? 'Saving…' : 'Posting…') : (editingJobId ? 'Save changes' : 'Post listing')}</button>
-					</div>
-				</footer>
-			{/if}
+			</footer>
 		</form>
 		{/if}
 	</div>
@@ -400,15 +359,10 @@
 						</div>
 					</fieldset>
 					<label class="stale-toggle"><input type="checkbox" bind:checked={ratingStale} /><span>This listing appears stale</span></label>
-					{#if profileState === 'loading'}
-						<p class="notice">Loading your player profile…</p>
-					{:else if profileState === 'missing'}
-						<label class="rating-username"><span>Choose your username <small>Required once</small></span><input bind:value={username} required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" placeholder="campus_recruit" /></label>
-					{/if}
 					{#if ratingError}<p class="error" role="alert">{ratingError}</p>{/if}
 					<div class="rating-footer">
 						<button class="secondary" type="button" onclick={closeRating} disabled={ratingSubmitting}>Cancel</button>
-						<button class="primary" type="submit" disabled={ratingSubmitting || ratingStars < 1 || profileState === 'loading'}>{ratingSubmitting ? 'Saving…' : 'Save rating'}</button>
+						<button class="primary" type="submit" disabled={ratingSubmitting || ratingStars < 1}>{ratingSubmitting ? 'Saving…' : 'Save rating'}</button>
 					</div>
 				{/if}
 			</form>
@@ -460,7 +414,6 @@
 	.star-picker button.chosen { color: #f0cf62; text-shadow: 0 0 12px rgba(240,207,98,.2); }
 	.stale-toggle { display: flex; align-items: center; gap: .65rem; padding: .85rem; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.025); }
 	.stale-toggle input { width: 1rem; min-height: auto; accent-color: #ff9a9a; }
-	.rating-username { margin-top: 1rem; }
 	.rating-loading { min-height: 9rem; display: grid; place-items: center; color: #829187; }
 	.rating-footer { display: flex; justify-content: flex-end; gap: .65rem; margin-top: 1.25rem; }
 	.rating-footer button { min-height: 2.7rem; padding: 0 1rem; border-radius: 2px; font: 650 .76rem/1 var(--font-display); cursor: pointer; }
@@ -479,8 +432,7 @@
 	input:focus, textarea:focus { border-color: rgba(126,240,180,.65); box-shadow: 0 0 0 2px rgba(126,240,180,.08); }
 	.remote-toggle { display: flex; align-items: center; gap: .6rem; min-height: 2.9rem; padding-top: 1.45rem; }
 	.remote-toggle input { width: 1rem; min-height: auto; accent-color: #82eab7; }
-	.notice, .error, .success { padding: .85rem 1rem; border: 1px solid rgba(255,255,255,.09); font-size: .78rem; line-height: 1.5; }
-	.notice { color: #91a49a; }
+	.error, .success { padding: .85rem 1rem; border: 1px solid rgba(255,255,255,.09); font-size: .78rem; line-height: 1.5; }
 	.error { border-color: rgba(255,116,116,.24); background: rgba(117,31,31,.14); color: #ffb0b0; }
 	.success { border-color: rgba(126,240,180,.26); background: rgba(55,138,94,.12); color: #a8f6ce; }
 	footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid rgba(255,255,255,.08); }

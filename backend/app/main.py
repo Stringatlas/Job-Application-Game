@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.config import get_settings
 from app.db.mongodb import create_mongo_client, initialize_database_state
+from app.websocket.manager import ConnectionManager
+from app.websocket.routes import router as websocket_router
 
 
 @asynccontextmanager
@@ -37,7 +39,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["Retry-After"],
     )
+    application.state.connection_manager = ConnectionManager()
     application.include_router(api_router)
+    application.include_router(websocket_router)
     return application
 
 

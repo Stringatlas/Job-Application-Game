@@ -1,7 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { GameWorld } from '$lib/game/GameWorld';
+	import MultiplayerOverlay from '$lib/components/MultiplayerOverlay.svelte';
 	import type { ActiveInteraction } from '$lib/game/interactions/InteractionSystem';
+	import { MultiplayerClient } from '$lib/game/multiplayer/MultiplayerClient';
+	import type { ChatEntry, ConnectionStatus, PlayerState } from '$lib/game/multiplayer/types';
 
 	interface Props {
 		authenticated: boolean;
@@ -15,6 +18,11 @@
 	let world: GameWorld | null = null;
 	let activeInteraction = $state<ActiveInteraction | null>(null);
 	let pointerLocked = $state(false);
+	let players = $state<PlayerState[]>([]);
+	let messages = $state<ChatEntry[]>([]);
+	let connectionStatus = $state<ConnectionStatus>('disconnected');
+	let chatFocused = $state(false);
+	let multiplayer: MultiplayerClient | null = null;
 
 	onMount(() => {
 		world = new GameWorld(mountNode, {
@@ -23,12 +31,31 @@
 			onJobBoardUse: onJobBoardRequested,
 			onPointerLockChange: (locked) => (pointerLocked = locked)
 		});
+		multiplayer = new MultiplayerClient(
+			() => world?.getLocalTransform() ?? { position: { x: 0, y: 1.65, z: 8.15 }, rotation: 0 },
+			{
+				onPlayersChange: (nextPlayers, selfId) => {
+					players = nextPlayers;
+					world?.setRemotePlayers(nextPlayers, selfId);
+				},
+				onChatEntry: (entry) => (messages = [...messages.slice(-99), entry]),
+				onStatusChange: (status) => (connectionStatus = status)
+			}
+		);
 		world.setAuthenticated(authenticated);
-		return () => world?.dispose();
+		if (authenticated) multiplayer.start();
+		return () => {
+			multiplayer?.stop();
+			world?.dispose();
+		};
 	});
 
-	$effect(() => world?.setPaused(overlayOpen));
+	$effect(() => world?.setPaused(overlayOpen || chatFocused));
 	$effect(() => world?.setAuthenticated(authenticated));
+	$effect(() => {
+		if (authenticated) multiplayer?.start();
+		else multiplayer?.stop();
+	});
 </script>
 
 <div class="viewport" bind:this={mountNode}>
@@ -36,6 +63,16 @@
 
 	{#if activeInteraction && pointerLocked && !overlayOpen}
 		<div class="interaction-prompt" aria-live="polite">{activeInteraction.prompt}</div>
+	{/if}
+
+	{#if authenticated}
+		<MultiplayerOverlay
+			{players}
+			messages={messages}
+			status={connectionStatus}
+			onSendChat={(text) => multiplayer?.sendChat(text) ?? false}
+			onChatFocusChange={(focused) => (chatFocused = focused)}
+		/>
 	{/if}
 
 </div>

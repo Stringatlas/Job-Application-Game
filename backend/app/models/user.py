@@ -20,7 +20,7 @@ class AuthenticatedUser(BaseModel):
     email: str | None = None
 
 
-class UserProfileUpdate(BaseModel):
+class UserProfileCreate(BaseModel):
     username: Username
     display_name: str | None = Field(default=None, min_length=1, max_length=80)
 

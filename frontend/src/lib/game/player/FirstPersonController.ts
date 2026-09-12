@@ -63,7 +63,11 @@ export class FirstPersonController {
 				.addScaledVector(this.right, horizontal)
 				.normalize();
 
-			const speed = this.pressed.has('ShiftLeft') ? 5.4 : 3.4;
+			const sprinting =
+				this.pressed.has('ControlLeft') ||
+				this.pressed.has('ControlRight') ||
+				this.pressed.has('ShiftLeft');
+			const speed = sprinting ? 5.4 : 3.4;
 			const distance = speed * delta;
 			const candidate = this.camera.position.clone();
 			candidate.x = THREE.MathUtils.clamp(

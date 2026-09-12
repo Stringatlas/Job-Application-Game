@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/public';
 import { auth } from '$lib/auth/auth-store';
-import type { JobListing, JobListingCreate, JobRating, UserProfile } from './types';
+import type { JobListing, JobListingCreate, JobRating, UserProfile, WebSocketTicket } from './types';
 
 const API_BASE_URL = (env.PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -62,9 +62,9 @@ export async function getMyProfile(): Promise<UserProfile | null> {
 	}
 }
 
-export function saveMyProfile(username: string, displayName: string | null): Promise<UserProfile> {
+export function createMyProfile(username: string, displayName: string | null): Promise<UserProfile> {
 	return request<UserProfile>('/api/users/me/profile', {
-		method: 'PUT',
+		method: 'POST',
 		body: JSON.stringify({ username, display_name: displayName })
 	});
 }
@@ -104,4 +104,16 @@ export function rateJobListing(id: string, rating: JobRating): Promise<JobListin
 		method: 'PUT',
 		body: JSON.stringify(rating)
 	});
+}
+
+export function createWebSocketTicket(): Promise<WebSocketTicket> {
+	return request<WebSocketTicket>('/api/websocket/ticket', { method: 'POST' });
+}
+
+export function websocketUrl(ticket: string): string {
+	const base = new URL(API_BASE_URL);
+	base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+	base.pathname = '/ws';
+	base.search = new URLSearchParams({ ticket }).toString();
+	return base.toString();
 }

@@ -32,3 +32,8 @@ export interface JobRating {
 	stars: number;
 	stale: boolean;
 }
+
+export interface WebSocketTicket {
+	ticket: string;
+	expires_in: number;
+}

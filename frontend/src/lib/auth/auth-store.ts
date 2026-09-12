@@ -27,20 +27,24 @@ function createAuthStore() {
 		},
 		async login() {
 			update((state) => ({ ...state, error: null }));
+			authService.clearPendingUsername();
 			await authService.login();
 		},
 		async loginWithGoogle() {
 			update((state) => ({ ...state, error: null }));
+			authService.clearPendingUsername();
 			await authService.loginWithGoogle();
 		},
-		async signUp() {
+		async signUp(username: string) {
 			update((state) => ({ ...state, error: null }));
-			await authService.signUp();
+			await authService.signUp(username);
 		},
 		async logout() {
 			await authService.logout();
 		},
-		getAccessToken: () => authService.getAccessToken()
+		getAccessToken: () => authService.getAccessToken(),
+		getPendingUsername: () => authService.getPendingUsername(),
+		clearPendingUsername: () => authService.clearPendingUsername()
 	};
 }
 

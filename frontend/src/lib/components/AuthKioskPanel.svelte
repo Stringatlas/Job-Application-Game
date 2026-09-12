@@ -3,19 +3,29 @@
 
 	interface Props {
 		authState: AuthState;
+		profileState: 'loading' | 'ready' | 'missing' | 'error';
+		profileError?: string | null;
 		onClose: () => void;
 		onLogin: () => void | Promise<void>;
 		onGoogle: () => void | Promise<void>;
-		onSignUp: () => void | Promise<void>;
+		onSignUp: (username: string) => void | Promise<void>;
+		onCreateProfile: (username: string) => void | Promise<void>;
 		onLogout: () => void | Promise<void>;
 	}
 
-	let { authState, onClose, onLogin, onGoogle, onSignUp, onLogout }: Props = $props();
+	let { authState, profileState, profileError = null, onClose, onLogin, onGoogle, onSignUp, onCreateProfile, onLogout }: Props = $props();
 	let submitting = $state(false);
+	let creatingAccount = $state(false);
+	let username = $state('');
 
 	async function run(action: () => void | Promise<void>) {
 		submitting = true;
 		try { await action(); } finally { submitting = false; }
+	}
+
+	async function submitUsername(event: SubmitEvent, action: (username: string) => void | Promise<void>) {
+		event.preventDefault();
+		await run(() => action(username));
 	}
 </script>
 
@@ -28,7 +38,7 @@
 
 		<div class="panel-body">
 			<p class="eyebrow">Employee authorization</p>
-			{#if authState.status === 'authenticated'}
+			{#if authState.status === 'authenticated' && profileState === 'ready'}
 				<h1 id="kiosk-title">Access granted.</h1>
 				<p class="lede">Your player pass is active. Multiplayer services can now connect.</p>
 				<div class="identity-card">
@@ -43,16 +53,41 @@
 					<button class="primary" onclick={onClose}>Return to office</button>
 					<button class="text-button" onclick={() => run(onLogout)} disabled={submitting}>Sign out</button>
 				</div>
+			{:else if authState.status === 'authenticated'}
+				<h1 id="kiosk-title">Create your player identity.</h1>
+				<p class="lede">Choose your permanent username to finish creating your account.</p>
+				{#if profileState === 'loading'}
+					<p class="notice">Setting up your player profile…</p>
+				{:else}
+					<form class="username-form" onsubmit={(event) => submitUsername(event, onCreateProfile)}>
+						<label for="profile-username">Username</label>
+						<input id="profile-username" bind:value={username} required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" placeholder="campus_recruit" />
+						<small>3–30 letters, numbers, or underscores. This cannot be changed later.</small>
+						{#if profileError}<p class="error" role="alert">{profileError}</p>{/if}
+						<button class="primary" type="submit" disabled={submitting}>Create player profile</button>
+					</form>
+				{/if}
+				<button class="text-button signout" onclick={() => run(onLogout)} disabled={submitting}>Sign out</button>
 			{:else}
 				<h1 id="kiosk-title">Check in to enter the network.</h1>
 				<p class="lede">Authentication activates your player identity, multiplayer presence, chat, and job board access.</p>
 				<div class="guest-badge"><span>Current status</span><strong>Local guest · Offline</strong></div>
 				{#if authState.status === 'error'}<p class="error" role="alert">{authState.error}</p>{/if}
-				<div class="actions">
-					<button class="google" onclick={() => run(onGoogle)} disabled={submitting || authState.status === 'loading'}><span class="google-mark">G</span>Continue with Google</button>
-					<button class="primary" onclick={() => run(onLogin)} disabled={submitting || authState.status === 'loading'}>Log in with email</button>
-					<button class="secondary" onclick={() => run(onSignUp)} disabled={submitting || authState.status === 'loading'}>Create player account</button>
-				</div>
+				{#if creatingAccount}
+					<form class="username-form" onsubmit={(event) => submitUsername(event, onSignUp)}>
+						<label for="signup-username">Username</label>
+						<input id="signup-username" bind:value={username} required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" placeholder="campus_recruit" />
+						<small>3–30 letters, numbers, or underscores. This cannot be changed later.</small>
+						<button class="primary" type="submit" disabled={submitting || authState.status === 'loading'}>Continue account creation</button>
+						<button class="text-button" type="button" onclick={() => (creatingAccount = false)} disabled={submitting}>Back</button>
+					</form>
+				{:else}
+					<div class="actions">
+						<button class="google" onclick={() => run(onGoogle)} disabled={submitting || authState.status === 'loading'}><span class="google-mark">G</span>Continue with Google</button>
+						<button class="primary" onclick={() => run(onLogin)} disabled={submitting || authState.status === 'loading'}>Log in with email</button>
+						<button class="secondary" onclick={() => (creatingAccount = true)} disabled={submitting || authState.status === 'loading'}>Create player account</button>
+					</div>
+				{/if}
 				<p class="privacy">Credentials are handled by Auth0. The game never receives your password.</p>
 			{/if}
 		</div>
@@ -83,6 +118,14 @@
 	.actions.single { margin-top: 1.5rem; }
 	button { font: inherit; }
 	.actions button { min-height: 3.15rem; border-radius: 2px; font-weight: 650; cursor: pointer; transition: transform 120ms ease, border-color 120ms ease, background 120ms ease; }
+	.username-form { display: grid; gap: .7rem; }
+	.username-form label { color: #b7c8bf; font: 600 .66rem/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+	.username-form input { min-height: 3.15rem; padding: 0 .9rem; border: 1px solid rgba(255,255,255,.13); border-radius: 2px; background: #0c1210; color: #eef8f2; font: 500 .88rem/1 var(--font-display); outline: none; }
+	.username-form input:focus { border-color: rgba(126,240,180,.65); box-shadow: 0 0 0 2px rgba(126,240,180,.08); }
+	.username-form small { color: #718078; font: 500 .62rem/1.5 var(--font-mono); }
+	.username-form button { min-height: 3.15rem; border-radius: 2px; font-weight: 650; cursor: pointer; }
+	.notice { padding: .85rem 1rem; border: 1px solid rgba(255,255,255,.09); color: #91a49a; font-size: .78rem; }
+	.signout { display: block; margin: 1rem auto 0; cursor: pointer; }
 	.actions button:hover:not(:disabled) { transform: translateY(-1px); }
 	.actions button:disabled { cursor: wait; opacity: .48; }
 	.primary { border: 1px solid #86ebbb; background: #86ebbb; color: #07100b; }

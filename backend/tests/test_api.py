@@ -4,8 +4,10 @@ from types import SimpleNamespace
 
 import jwt
 from bson import ObjectId
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from pymongo.errors import DuplicateKeyError
 from pytest import MonkeyPatch
 
 from app.auth.dependencies import get_current_user
@@ -63,6 +65,13 @@ class FakeUsersCollection:
             }
         self.document.update(update["$set"])
         return self.document
+
+    async def insert_one(self, document: dict) -> SimpleNamespace:
+        if self.document is not None:
+            raise DuplicateKeyError("duplicate profile")
+        inserted_id = ObjectId()
+        self.document = {**document, "_id": inserted_id}
+        return SimpleNamespace(inserted_id=inserted_id)
 
 
 class FakeProfileDatabase:
@@ -387,9 +396,7 @@ def test_owner_can_manage_and_rate_their_own_jobs() -> None:
             job_document(other_job_id, ObjectId(), "Someone else's listing"),
         ],
     )
-    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
-        sub="auth0|job-owner"
-    )
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|job-owner")
     app.dependency_overrides[get_ready_database] = lambda: database
     try:
         with TestClient(app) as client:
@@ -489,13 +496,13 @@ def test_me_returns_verified_identity(monkeypatch: MonkeyPatch) -> None:
     }
 
 
-def test_upsert_and_get_profile() -> None:
+def test_create_and_get_profile() -> None:
     database = FakeProfileDatabase()
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|profile-user")
     app.dependency_overrides[get_ready_database] = lambda: database
     try:
         with TestClient(app) as client:
-            update_response = client.put(
+            create_response = client.post(
                 "/api/users/me/profile",
                 json={"username": "Player_One", "display_name": "Player One"},
             )
@@ -503,9 +510,129 @@ def test_upsert_and_get_profile() -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert update_response.status_code == 200
-    assert update_response.json()["username"] == "Player_One"
+    assert create_response.status_code == 201
+    assert create_response.json()["username"] == "Player_One"
     assert get_response.status_code == 200
-    assert get_response.json() == update_response.json()
+    assert get_response.json() == create_response.json()
     assert database.users.document is not None
     assert database.users.document["username_key"] == "player_one"
+
+
+def test_profile_username_cannot_be_replaced() -> None:
+    database = FakeProfileDatabase()
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|profile-user")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            first_response = client.post(
+                "/api/users/me/profile",
+                json={"username": "Player_One", "display_name": "Player One"},
+            )
+            second_response = client.post(
+                "/api/users/me/profile",
+                json={"username": "Different_Name", "display_name": "Player One"},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 409
+    assert second_response.json() == {"detail": "Profile already exists"}
+    assert database.users.document is not None
+    assert database.users.document["username"] == "Player_One"
+
+
+def test_authenticated_websocket_tracks_presence_movement_chat_and_departure() -> None:
+    database = FakeProfileDatabase()
+    database.users.document = {
+        "_id": ObjectId(),
+        "auth0_sub": "auth0|one",
+        "username": "Player_One",
+    }
+    current_user = AuthenticatedUser(sub="auth0|one")
+    app.dependency_overrides[get_current_user] = lambda: current_user
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            first_ticket = client.post("/api/websocket/ticket").json()["ticket"]
+
+            current_user.sub = "auth0|two"
+            assert database.users.document is not None
+            database.users.document.update({"auth0_sub": "auth0|two", "username": "Player_Two"})
+            second_ticket = client.post("/api/websocket/ticket").json()["ticket"]
+
+            with client.websocket_connect(f"/ws?ticket={first_ticket}") as first_socket:
+                first_welcome = first_socket.receive_json()
+                assert first_welcome["type"] == "lobby.welcome"
+                assert [player["username"] for player in first_welcome["payload"]["players"]] == [
+                    "Player_One"
+                ]
+
+                with client.websocket_connect(f"/ws?ticket={second_ticket}") as second_socket:
+                    second_welcome = second_socket.receive_json()
+                    connected_names = {
+                        player["username"] for player in second_welcome["payload"]["players"]
+                    }
+                    assert connected_names == {
+                        "Player_One",
+                        "Player_Two",
+                    }
+                    joined = first_socket.receive_json()
+                    assert joined["type"] == "player.joined"
+                    assert joined["payload"]["username"] == "Player_Two"
+
+                    first_socket.send_json(
+                        {
+                            "type": "player.move",
+                            "payload": {
+                                "position": {"x": 1, "y": 1.65, "z": 2},
+                                "rotation": 0.5,
+                            },
+                        }
+                    )
+                    moved = second_socket.receive_json()
+                    assert moved["type"] == "player.moved"
+                    assert moved["payload"]["position"]["x"] == 1
+
+                    first_socket.send_json(
+                        {"type": "chat.send", "payload": {"text": "Hello office"}}
+                    )
+                    chat = first_socket.receive_json()
+                    assert chat["type"] == "chat.message"
+                    assert chat["payload"]["username"] == "Player_One"
+                    assert chat["payload"]["text"] == "Hello office"
+                    assert second_socket.receive_json()["type"] == "chat.message"
+
+                departed = first_socket.receive_json()
+                assert departed["type"] == "player.left"
+                assert departed["payload"]["username"] == "Player_Two"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_websocket_rejects_reused_ticket_and_malformed_messages() -> None:
+    database = FakeProfileDatabase()
+    database.users.document = {
+        "_id": ObjectId(),
+        "auth0_sub": "auth0|one",
+        "username": "Player_One",
+    }
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|one")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            ticket = client.post("/api/websocket/ticket").json()["ticket"]
+            with client.websocket_connect(f"/ws?ticket={ticket}") as socket:
+                socket.receive_json()
+                socket.send_json({"type": "chat.send", "payload": {"text": ""}})
+                error = socket.receive_json()
+                assert error["type"] == "error"
+                assert error["payload"]["code"] == "invalid_message"
+
+            try:
+                with client.websocket_connect(f"/ws?ticket={ticket}"):
+                    raise AssertionError("A one-use ticket should not reconnect")
+            except WebSocketDisconnect as exc:
+                assert exc.code == 1008
+    finally:
+        app.dependency_overrides.clear()

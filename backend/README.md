@@ -23,8 +23,8 @@ The local API is available at `http://localhost:8000`, with interactive docs at
 All mutation routes require an Auth0 bearer token. Identity and ownership always come from the
 verified token rather than request data.
 
-- `PUT /api/users/me/profile` creates or updates the user's app profile. Usernames are 3–30
-  letters, numbers, or underscores and are unique without regard to case.
+- `POST /api/users/me/profile` creates the user's app profile once during account setup. Usernames
+  are 3–30 letters, numbers, or underscores, are unique without regard to case, and are immutable.
 - `GET /api/users/me/profile` returns the saved profile.
 - `POST /api/jobs` creates a job listing after the user has a profile.
 - `GET /api/jobs` returns the newest visible listings for the bulletin board.
@@ -57,3 +57,23 @@ uv run ruff check .
 uv run ruff format --check .
 uv run pytest
 ```
+## Realtime multiplayer
+
+Authenticated players first `POST /api/websocket/ticket` with their bearer token, then connect
+to `/ws?ticket=...`. Tickets expire after 30 seconds and can only be used once. Player identity and
+username are resolved by the server; the WebSocket never accepts them from a client message.
+
+Client messages:
+
+- `player.move`: `{ "position": { "x": 0, "y": 1.65, "z": 0 }, "rotation": 0 }`
+- `chat.send`: `{ "text": "Hello" }`
+
+Server messages:
+
+- `lobby.welcome`: the connection's `self_id` and complete player snapshot
+- `player.joined`, `player.moved`, `player.left`: presence and movement changes
+- `chat.message`: server-attributed username, text, ID, and timestamp
+- `error`: invalid input or rate-limit feedback; the connection remains usable
+
+All messages use `{ "type": "...", "payload": { ... } }`. Lobby state and chat are intentionally
+in-memory and assume one FastAPI process for the demo.
