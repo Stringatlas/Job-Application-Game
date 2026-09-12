@@ -132,6 +132,31 @@ export function createWebSocketTicket(): Promise<WebSocketTicket> {
 	return request<WebSocketTicket>('/api/websocket/ticket', { method: 'POST' });
 }
 
+export interface NpcSpeech {
+	audio: Blob;
+	dialogue: string;
+}
+
+export async function speakWithMysteriousHorizon(): Promise<NpcSpeech> {
+	const accessToken = await auth.getAccessToken();
+	const response = await fetch(`${API_BASE_URL}/api/npc/mysterious-horizon/speak`, {
+		method: 'POST',
+		headers: { Authorization: `Bearer ${accessToken}` }
+	});
+	if (!response.ok) {
+		const body: unknown = await response.json().catch(() => null);
+		throw new ApiError(errorMessage(body), response.status);
+	}
+	const encodedDialogue = response.headers.get('X-NPC-Dialogue') ?? '';
+	let dialogue = '';
+	try {
+		dialogue = decodeURIComponent(encodedDialogue);
+	} catch {
+		dialogue = encodedDialogue;
+	}
+	return { audio: await response.blob(), dialogue };
+}
+
 export function websocketUrl(ticket: string): string {
 	const base = new URL(API_BASE_URL);
 	base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';

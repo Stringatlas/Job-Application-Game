@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=512, ge=1, le=2_000)
     llm_job_context_limit: int = Field(default=50, ge=1, le=200)
     llm_chat_history_limit: int = Field(default=5, ge=1, le=20)
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_timeout_seconds: float = Field(default=30, gt=0, le=120)
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

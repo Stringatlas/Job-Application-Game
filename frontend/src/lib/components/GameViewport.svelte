@@ -26,7 +26,29 @@
 	let chatFocused = $state(false);
 	let chatFocusRequest = $state(0);
 	let showOnboarding = $state(false);
+	let npcDialogue = $state<string | null>(null);
+	let streamedDialogue = $state('');
 	let multiplayer: MultiplayerClient | null = null;
+	let dialogueInterval: ReturnType<typeof setInterval> | null = null;
+
+	function clearDialogueInterval(): void {
+		if (dialogueInterval) clearInterval(dialogueInterval);
+		dialogueInterval = null;
+	}
+
+	function handleNpcDialogue(dialogue: string | null): void {
+		clearDialogueInterval();
+		npcDialogue = dialogue;
+		streamedDialogue = '';
+		if (!dialogue) return;
+
+		let characterIndex = 0;
+		dialogueInterval = setInterval(() => {
+			characterIndex += 1;
+			streamedDialogue = dialogue.slice(0, characterIndex);
+			if (characterIndex >= dialogue.length) clearDialogueInterval();
+		}, 28);
+	}
 
 	function handleChatShortcut(event: KeyboardEvent): void {
 		if (event.code !== 'Enter' || event.repeat || overlayOpen || !authenticated) return;
@@ -51,6 +73,7 @@
 
 		world = new GameWorld(mountNode, {
 			onInteractionChange: (interaction) => (activeInteraction = interaction),
+			onNpcDialogue: handleNpcDialogue,
 			onLoginKioskUse: onLoginRequested,
 			onJobBoardUse: onJobBoardRequested,
 			onPointerLockChange: (locked) => (pointerLocked = locked)
@@ -70,6 +93,7 @@
 		if (authenticated) multiplayer.start();
 		window.addEventListener('keydown', handleChatShortcut);
 		return () => {
+			clearDialogueInterval();
 			window.removeEventListener('keydown', handleChatShortcut);
 			multiplayer?.stop();
 			world?.dispose();
@@ -106,6 +130,19 @@
 
 	{#if activeInteraction && pointerLocked && !overlayOpen}
 		<div class="interaction-prompt" aria-live="polite">{activeInteraction.prompt}</div>
+	{/if}
+
+	{#if npcDialogue && !overlayOpen}
+		<div class="npc-dialogue" role="status" aria-live="polite">
+			<strong>Mysterious Horizon</strong>
+			<p>
+				{streamedDialogue}<span
+					class:hidden={streamedDialogue.length >= npcDialogue.length}
+					class="dialogue-cursor"
+					aria-hidden="true">▮</span
+				>
+			</p>
+		</div>
 	{/if}
 
 	{#if authenticated}
@@ -207,4 +244,41 @@
 		font: 700 0.75rem/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase;
 		text-shadow: 0 1px 1px #000;
 	}
+	.npc-dialogue {
+		position: absolute;
+		z-index: 5;
+		left: 50%;
+		bottom: 5.5%;
+		width: min(42rem, calc(100vw - 2rem));
+		translate: -50% 0;
+		padding: 1rem 1.15rem 1.1rem;
+		border: 1px solid rgba(197, 168, 58, .78);
+		border-left-width: 4px;
+		background: linear-gradient(90deg, rgba(16, 16, 8, .96), rgba(24, 23, 12, .9));
+		box-shadow: 0 16px 48px rgba(0, 0, 0, .72), inset 0 0 24px rgba(197, 168, 58, .04);
+		pointer-events: none;
+	}
+	.npc-dialogue strong {
+		display: block;
+		margin-bottom: .45rem;
+		color: #c5a83a;
+		font: 800 .7rem/1 var(--font-mono);
+		letter-spacing: .15em;
+		text-transform: uppercase;
+	}
+	.npc-dialogue p {
+		min-height: 1.35em;
+		margin: 0;
+		color: #fff8bd;
+		font: 500 .94rem/1.5 var(--font-mono);
+		text-shadow: 0 1px 2px #000;
+	}
+	.dialogue-cursor {
+		display: inline-block;
+		margin-left: .12em;
+		color: #c5a83a;
+		animation: dialogue-blink .7s steps(1) infinite;
+	}
+	.dialogue-cursor.hidden { visibility: hidden; }
+	@keyframes dialogue-blink { 50% { opacity: 0; } }
 </style>

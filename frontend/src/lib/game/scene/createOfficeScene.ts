@@ -21,7 +21,6 @@ export interface CollisionBox { minX: number; maxX: number; minZ: number; maxZ: 
 export interface OfficeScene {
 	scene: THREE.Scene;
 	loginKiosk: THREE.Group;
-	loginScreenMaterial: THREE.MeshStandardMaterial;
 	jobBoard: THREE.Group;
 	jobBoardMaterial: THREE.MeshStandardMaterial;
 	closetDoor: THREE.Group;
@@ -55,12 +54,35 @@ function loadRepeatingTexture(url: string, repeat: [number, number], track: <T e
 
 function makeLoginTexture(): THREE.CanvasTexture {
 	return makeCanvasTexture(768, 384, (context) => {
-		context.fillStyle = '#0b0d08'; context.fillRect(0, 0, 768, 384);
-		context.strokeStyle = '#ece8ae'; context.lineWidth = 10; context.strokeRect(22, 22, 724, 340);
-		context.fillStyle = '#fffbc5'; context.textAlign = 'center'; context.font = '700 33px monospace';
-		context.fillText('PERSONNEL TERMINAL', 384, 105);
-		context.font = '800 60px monospace'; context.fillText('SIGN IN', 384, 215);
-		context.fillStyle = '#d0cd91'; context.font = '600 25px monospace'; context.fillText('EXIT REMAINS LOCKED', 384, 292);
+		context.fillStyle = '#d8cfad'; context.fillRect(0, 0, 768, 384);
+		for (const [x, y, radius] of [[92, 48, 82], [682, 326, 104], [318, 205, 58]] as const) {
+			const stain = context.createRadialGradient(x, y, 4, x, y, radius);
+			stain.addColorStop(0, 'rgba(92, 62, 34, 0.18)');
+			stain.addColorStop(1, 'rgba(92, 62, 34, 0)');
+			context.fillStyle = stain; context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+		}
+		context.strokeStyle = 'rgba(67, 45, 29, 0.2)'; context.lineWidth = 10;
+		context.strokeRect(5, 5, 758, 374);
+		context.fillStyle = '#3e382e'; context.textAlign = 'center'; context.font = '700 38px Georgia, serif';
+		context.fillText('EMPLOYEE SIGN-IN SHEET', 384, 55);
+		context.font = 'italic 19px Georgia, serif'; context.fillText('Please print clearly', 384, 85);
+		context.textAlign = 'left'; context.font = '700 20px Arial, sans-serif';
+		context.fillText('NAME', 45, 122); context.fillText('TIME', 585, 122);
+		context.strokeStyle = 'rgba(83, 75, 61, 0.7)'; context.lineWidth = 2;
+		context.beginPath();
+		context.moveTo(38, 134); context.lineTo(730, 134);
+		context.moveTo(560, 104); context.lineTo(560, 360);
+		for (let y = 178; y <= 354; y += 44) {
+			context.moveTo(38, y); context.lineTo(730, y);
+		}
+		context.stroke();
+		context.fillStyle = 'rgba(49, 43, 37, 0.72)'; context.font = 'italic 25px "Bradley Hand", cursive';
+		context.fillText('M. Harrow', 58, 166); context.fillText('11:48 PM', 590, 166);
+		context.fillText('Evelyn G.', 52, 210); context.fillText('12:13 AM', 587, 210);
+		context.fillStyle = 'rgba(74, 30, 27, 0.72)';
+		context.fillText('still here', 63, 342);
+		context.strokeStyle = 'rgba(61, 48, 37, 0.18)'; context.lineWidth = 5;
+		context.beginPath(); context.moveTo(250, 148); context.lineTo(474, 156); context.stroke();
 	});
 }
 
@@ -78,6 +100,15 @@ function makeBoardTexture(): THREE.CanvasTexture {
 			context.fillRect(x + 20, y + 28, 132, 11); context.fillRect(x + 20, y + 55, 158, 7);
 			context.fillRect(x + 20, y + 76, 112, 7); context.fillRect(x + 20, y + 126, 72, 7);
 		}
+	});
+}
+
+function makeDoorSignTexture(): THREE.CanvasTexture {
+	return makeCanvasTexture(768, 240, (context) => {
+		context.fillStyle = '#d6cf91'; context.fillRect(0, 0, 768, 240);
+		context.strokeStyle = '#332719'; context.lineWidth = 14; context.strokeRect(12, 12, 744, 216);
+		context.fillStyle = '#241c12'; context.textAlign = 'center'; context.textBaseline = 'middle';
+		context.font = '800 78px monospace'; context.fillText('The Job Rooms', 384, 124);
 	});
 }
 
@@ -129,12 +160,25 @@ export function createOfficeScene(): OfficeScene {
 	const doorHeight = CEILING_HEIGHT - 0.04;
 	const door = new THREE.Mesh(track(new THREE.BoxGeometry(doorWidth, doorHeight, 0.11)), track(new THREE.MeshStandardMaterial({ map: woodTexture, color: '#8b765d', roughness: 0.82, metalness: 0.02 })));
 	door.position.set(doorWidth / 2, doorHeight / 2, 0); door.castShadow = true; closetDoor.add(door); scene.add(closetDoor);
+	const doorSign = new THREE.Mesh(track(new THREE.PlaneGeometry(1.72, 0.54)), track(new THREE.MeshStandardMaterial({ map: track(makeDoorSignTexture()), roughness: 0.86 })));
+	doorSign.position.set(doorWidth / 2, 2.55, 0.056); closetDoor.add(doorSign);
 
-	const loginKiosk = new THREE.Group(); loginKiosk.position.set(2.14, 0, 7.65); loginKiosk.rotation.y = -Math.PI / 2;
-	const kioskBody = new THREE.Mesh(track(new THREE.BoxGeometry(1.6, 2.15, 0.55)), track(new THREE.MeshStandardMaterial({ color: '#302f24', roughness: 0.55, metalness: 0.35 })));
-	kioskBody.position.y = 1.08; kioskBody.castShadow = true; loginKiosk.add(kioskBody);
-	const loginScreenMaterial = track(new THREE.MeshStandardMaterial({ map: track(makeLoginTexture()), emissive: '#b4b16a', emissiveIntensity: 0.38, roughness: 0.3 }));
-	const screen = new THREE.Mesh(track(new THREE.PlaneGeometry(1.3, 0.74)), loginScreenMaterial); screen.position.set(0, 1.38, 0.281); loginKiosk.add(screen); scene.add(loginKiosk);
+	const loginKiosk = new THREE.Group(); loginKiosk.position.set(1.78, 0, 7.65); loginKiosk.rotation.y = -Math.PI / 2;
+	const standMaterial = track(new THREE.MeshStandardMaterial({ color: '#5b432d', roughness: 0.9 }));
+	const standBase = new THREE.Mesh(track(new THREE.BoxGeometry(1.2, 0.12, 0.72)), standMaterial);
+	standBase.position.y = 0.06; standBase.castShadow = true;
+	const standPost = new THREE.Mesh(track(new THREE.BoxGeometry(0.18, 1.25, 0.18)), standMaterial);
+	standPost.position.y = 0.68; standPost.castShadow = true;
+	const clipboard = new THREE.Group(); clipboard.position.set(0, 1.42, 0.08); clipboard.rotation.x = -0.5;
+	const board = new THREE.Mesh(track(new THREE.BoxGeometry(1.42, 0.92, 0.1)), standMaterial);
+	board.castShadow = true;
+	const sheetMaterial = track(new THREE.MeshStandardMaterial({ map: track(makeLoginTexture()), color: '#fffdf2', roughness: 1 }));
+	const sheet = new THREE.Mesh(track(new THREE.PlaneGeometry(1.3, 0.76)), sheetMaterial);
+	sheet.position.z = 0.051;
+	const clip = new THREE.Mesh(track(new THREE.BoxGeometry(0.34, 0.1, 0.04)), track(new THREE.MeshStandardMaterial({ color: '#77746d', roughness: 0.4, metalness: 0.7 })));
+	clip.position.set(0, 0.43, 0.075);
+	clipboard.add(board, sheet, clip);
+	loginKiosk.add(standBase, standPost, clipboard); scene.add(loginKiosk);
 
 	const jobBoard = new THREE.Group(); jobBoard.position.set(-2.1, 2.15, -9.16);
 	const boardBacking = new THREE.Mesh(track(new THREE.BoxGeometry(5.6, 3.25, 0.24)), track(new THREE.MeshStandardMaterial({ color: '#332719', roughness: 0.82 })));
@@ -161,7 +205,7 @@ export function createOfficeScene(): OfficeScene {
 	for (const fixture of lights) scene.add(fixture.group);
 
 	return {
-		scene, loginKiosk, loginScreenMaterial, jobBoard, jobBoardMaterial, closetDoor, wallColliders,
+		scene, loginKiosk, jobBoard, jobBoardMaterial, closetDoor, wallColliders,
 		updateLights: (elapsedSeconds) => lights.forEach((light) => light.update(elapsedSeconds)),
 		dispose: () => { lights.forEach((light) => light.dispose()); disposable.forEach((resource) => resource.dispose()); }
 	};

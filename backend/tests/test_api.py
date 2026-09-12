@@ -1,6 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from urllib.parse import unquote
 
 import jwt
 from bson import ObjectId
@@ -792,4 +793,54 @@ def test_websocket_broadcasts_configured_llm_response() -> None:
                 )
     finally:
         app.state.lobby_llm = original_responder
+        app.dependency_overrides.clear()
+
+
+def test_mysterious_horizon_interaction_generates_spoken_audio() -> None:
+    class FakeLobbyResponder:
+        async def respond(
+            self,
+            _database: object,
+            _players: list[object],
+            sender_username: str,
+            text: str,
+            _recent_chat: list[object],
+        ) -> str:
+            assert sender_username == "Player_One"
+            assert "approached you in person" in text
+            return "The office has kept your chair warm."
+
+    class FakeSpeechProvider:
+        dialogue: str | None = None
+
+        async def synthesize(self, text: str) -> bytes:
+            self.dialogue = text
+            return b"fake-mp3-audio"
+
+    database = FakeProfileDatabase()
+    database.users.document = {
+        "_id": ObjectId(),
+        "auth0_sub": "auth0|one",
+        "username": "Player_One",
+    }
+    speech = FakeSpeechProvider()
+    original_responder = app.state.lobby_llm
+    original_speech = app.state.npc_speech
+    app.state.lobby_llm = FakeLobbyResponder()
+    app.state.npc_speech = speech
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|one")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            response = client.post("/api/npc/mysterious-horizon/speak")
+            assert response.status_code == 200
+            assert response.headers["content-type"] == "audio/mpeg"
+            assert response.content == b"fake-mp3-audio"
+            assert unquote(response.headers["x-npc-dialogue"]) == (
+                "The office has kept your chair warm."
+            )
+            assert speech.dialogue == "The office has kept your chair warm."
+    finally:
+        app.state.lobby_llm = original_responder
+        app.state.npc_speech = original_speech
         app.dependency_overrides.clear()

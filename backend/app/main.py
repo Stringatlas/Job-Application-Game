@@ -9,6 +9,7 @@ from app.api.router import api_router
 from app.config import get_settings
 from app.db.mongodb import create_mongo_client, initialize_database_state
 from app.services.llm import create_lobby_llm_responder
+from app.services.speech import create_elevenlabs_speech_provider
 from app.websocket.manager import ConnectionManager
 from app.websocket.routes import router as websocket_router
 
@@ -48,10 +49,11 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Retry-After"],
+        expose_headers=["Retry-After", "X-NPC-Dialogue"],
     )
     application.state.connection_manager = ConnectionManager()
     application.state.lobby_llm = create_lobby_llm_responder(settings)
+    application.state.npc_speech = create_elevenlabs_speech_provider(settings)
     application.state.settings = settings
     application.include_router(api_router)
     application.include_router(websocket_router)

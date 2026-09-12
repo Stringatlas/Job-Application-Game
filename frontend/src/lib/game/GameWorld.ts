@@ -9,6 +9,8 @@ import {
 } from './scene/createOfficeScene';
 import { HorrorPostProcessing } from './rendering/HorrorPostProcessing';
 import type { PlayerState, Vector3State } from './multiplayer/types';
+import { MysteriousHorizon } from './npc/MysteriousHorizon';
+import { speakWithMysteriousHorizon } from '$lib/api/client';
 
 interface RemoteAvatar {
 	group: THREE.Group;
@@ -18,6 +20,7 @@ interface RemoteAvatar {
 
 export interface GameWorldEvents {
 	onInteractionChange: (interaction: ActiveInteraction | null) => void;
+	onNpcDialogue: (dialogue: string | null) => void;
 	onLoginKioskUse: () => void;
 	onJobBoardUse: () => void;
 	onPointerLockChange: (locked: boolean) => void;
@@ -30,12 +33,16 @@ export class GameWorld {
 	private readonly interactions: InteractionSystem;
 	private readonly office: ReturnType<typeof createOfficeScene>;
 	private readonly postProcessing: HorrorPostProcessing;
+	private readonly mysteriousHorizon: MysteriousHorizon;
 	private readonly clock = new THREE.Clock();
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
 	private disposed = false;
 	private authenticated = false;
 	private doorOpenProgress = 0;
+	private npcVoice: HTMLAudioElement | null = null;
+	private npcVoiceUrl: string | null = null;
+	private npcVoiceLoading = false;
 	private readonly remoteAvatars = new Map<string, RemoteAvatar>();
 
 	constructor(
@@ -57,6 +64,7 @@ export class GameWorld {
 		this.camera.position.set(0, 1.65, 8.15);
 		sessionStorage.removeItem('jag:spawn');
 		this.office = createOfficeScene();
+		this.mysteriousHorizon = new MysteriousHorizon(this.office.scene);
 		this.postProcessing = new HorrorPostProcessing(this.renderer, this.office.scene, this.camera);
 		this.interactions = new InteractionSystem(events.onInteractionChange);
 		this.controller = new FirstPersonController(
@@ -73,9 +81,6 @@ export class GameWorld {
 			prompt: 'E  Check in',
 			maxDistance: 3.4,
 			minimumFacing: 0.35,
-			onFocusChange: (focused) => {
-				this.office.loginScreenMaterial.emissiveIntensity = focused ? 0.72 : 0.32;
-			},
 			onInteract: events.onLoginKioskUse
 		});
 		this.interactions.register({
@@ -88,6 +93,14 @@ export class GameWorld {
 				this.office.jobBoardMaterial.emissiveIntensity = focused ? 0.24 : 0.08;
 			},
 			onInteract: events.onJobBoardUse
+		});
+		this.interactions.register({
+			id: 'mysterious-horizon',
+			object: this.mysteriousHorizon.group,
+			prompt: 'E  Talk to Mysterious Horizon',
+			maxDistance: 3.2,
+			minimumFacing: 0.25,
+			onInteract: this.handleMysteriousHorizonInteraction
 		});
 
 		this.renderer.domElement.addEventListener('click', this.handleCanvasClick);
@@ -170,8 +183,10 @@ export class GameWorld {
 		this.renderer.domElement.removeEventListener('click', this.handleCanvasClick);
 		this.controller.dispose();
 		this.interactions.dispose();
+		this.clearNpcVoice();
 		this.setRemotePlayers([], null);
 		this.postProcessing.dispose();
+		this.mysteriousHorizon.dispose(this.office.scene);
 		this.office.dispose();
 		this.renderer.dispose();
 		this.renderer.domElement.remove();
@@ -184,6 +199,7 @@ export class GameWorld {
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
 		this.office.updateLights(this.clock.elapsedTime);
+		this.mysteriousHorizon.update(delta, this.clock.elapsedTime);
 		const doorTarget = this.authenticated ? 1 : 0;
 		this.doorOpenProgress = THREE.MathUtils.damp(
 			this.doorOpenProgress,
@@ -192,8 +208,6 @@ export class GameWorld {
 			delta
 		);
 		this.office.closetDoor.rotation.y = -this.doorOpenProgress * Math.PI * 0.52;
-		const pulse = 1 + Math.sin(this.clock.elapsedTime * 2.1) * 0.006;
-		this.office.loginKiosk.scale.setScalar(pulse);
 		for (const avatar of this.remoteAvatars.values()) {
 			avatar.group.position.lerp(avatar.targetPosition, 1 - Math.exp(-12 * delta));
 			avatar.group.rotation.y = THREE.MathUtils.damp(
@@ -248,6 +262,55 @@ export class GameWorld {
 			this.interactions.interact();
 		}
 	};
+
+	private handleMysteriousHorizonInteraction = (): void => {
+		if (this.npcVoiceLoading || this.npcVoice) return;
+		this.npcVoiceLoading = true;
+		this.interactions.updatePrompt('mysterious-horizon', 'Mysterious Horizon is listening…');
+		void speakWithMysteriousHorizon()
+			.then((speech) => {
+				if (this.disposed) return;
+				this.events.onNpcDialogue(speech.dialogue);
+				this.npcVoiceUrl = URL.createObjectURL(speech.audio);
+				const audio = new Audio(this.npcVoiceUrl);
+				this.npcVoice = audio;
+				audio.volume = 0.85;
+				audio.addEventListener('ended', this.clearNpcVoice, { once: true });
+				audio.addEventListener('error', this.clearNpcVoice, { once: true });
+				this.interactions.updatePrompt('mysterious-horizon', 'Mysterious Horizon is speaking…');
+				void audio.play().catch(this.clearNpcVoice);
+			})
+			.catch(() => {
+				this.interactions.updatePrompt('mysterious-horizon', 'His voice does not reach you');
+				window.setTimeout(() => {
+					if (!this.disposed) this.resetMysteriousHorizonPrompt();
+				}, 1800);
+			})
+			.finally(() => {
+				this.npcVoiceLoading = false;
+			});
+	};
+
+	private clearNpcVoice = (): void => {
+		if (this.npcVoice) {
+			this.npcVoice.pause();
+			this.npcVoice.removeAttribute('src');
+			this.npcVoice.load();
+			this.npcVoice = null;
+		}
+		if (this.npcVoiceUrl) {
+			URL.revokeObjectURL(this.npcVoiceUrl);
+			this.npcVoiceUrl = null;
+		}
+		if (!this.disposed) {
+			this.events.onNpcDialogue(null);
+			this.resetMysteriousHorizonPrompt();
+		}
+	};
+
+	private resetMysteriousHorizonPrompt(): void {
+		this.interactions.updatePrompt('mysterious-horizon', 'E  Talk to Mysterious Horizon');
+	}
 
 	private createRemoteAvatar(id: string, username: string): THREE.Group {
 		const hue = [...id].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 360;
