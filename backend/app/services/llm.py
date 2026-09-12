@@ -31,51 +31,97 @@ class OpenAICompatibleChatProvider:
     model: str
     timeout_seconds: float
     temperature: float
+    top_p: float
+    reasoning_effort: str | None
     max_tokens: int
+    retry_max_tokens: int
 
     async def complete(self, messages: list[ChatMessage]) -> str:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        started_at = time.monotonic()
-        logger.info(
-            "Lobby LLM outbound request: model=%s timeout_seconds=%s",
-            self.model,
-            self.timeout_seconds,
-        )
         async with httpx2.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(
-                self.api_url,
-                headers=headers,
-                json={
+            token_budgets = [self.max_tokens]
+            if self.retry_max_tokens > self.max_tokens:
+                token_budgets.append(self.retry_max_tokens)
+
+            for attempt, token_budget in enumerate(token_budgets, start=1):
+                request_payload: dict[str, object] = {
                     "messages": messages,
                     "model": self.model,
                     "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
-                },
-            )
-            logger.info(
-                "Lobby LLM HTTP response: status=%s elapsed_ms=%d",
-                response.status_code,
-                (time.monotonic() - started_at) * 1_000,
-            )
-            if response.status_code >= 400:
-                logger.error(
-                    "Lobby LLM provider error: status=%s body=%s",
-                    response.status_code,
-                    response.text[:500],
-                )
-            response.raise_for_status()
-            payload = response.json()
+                    "top_p": self.top_p,
+                    "max_tokens": token_budget,
+                }
+                if self.reasoning_effort is not None:
+                    request_payload["chat_template_kwargs"] = {
+                        "reasoning_effort": self.reasoning_effort
+                    }
 
-        try:
-            content = payload["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ValueError("Chat completion response did not contain message content") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("Chat completion response contained empty message content")
-        return content.strip()
+                started_at = time.monotonic()
+                logger.info(
+                    "Lobby LLM outbound request: model=%s timeout_seconds=%s "
+                    "max_tokens=%d attempt=%d",
+                    self.model,
+                    self.timeout_seconds,
+                    token_budget,
+                    attempt,
+                )
+                response = await client.post(
+                    self.api_url,
+                    headers=headers,
+                    json=request_payload,
+                )
+                logger.info(
+                    "Lobby LLM HTTP response: status=%s elapsed_ms=%d",
+                    response.status_code,
+                    (time.monotonic() - started_at) * 1_000,
+                )
+                if response.status_code >= 400:
+                    logger.error(
+                        "Lobby LLM provider error: status=%s body=%s",
+                        response.status_code,
+                        response.text[:500],
+                    )
+                response.raise_for_status()
+                payload = response.json()
+
+                try:
+                    choice = payload["choices"][0]
+                    content = choice["message"]["content"]
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise ValueError(
+                        "Chat completion response did not contain message content"
+                    ) from exc
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("Chat completion response contained empty message content")
+
+                finish_reason = choice.get("finish_reason")
+                usage = payload.get("usage", {})
+                completion_tokens = (
+                    usage.get("completion_tokens") if isinstance(usage, dict) else None
+                )
+                logger.info(
+                    "Lobby LLM completion received: finish_reason=%s completion_tokens=%s "
+                    "characters=%d",
+                    finish_reason,
+                    completion_tokens,
+                    len(content),
+                )
+                if finish_reason not in {"length", "max_tokens"}:
+                    return content.strip()
+                if attempt < len(token_budgets):
+                    logger.warning(
+                        "Lobby LLM completion hit its token limit; retrying with max_tokens=%d",
+                        token_budgets[attempt],
+                    )
+                    continue
+                raise ValueError(
+                    f"Chat completion was truncated at the {token_budget}-token limit"
+                )
+
+        raise RuntimeError("Chat completion attempt loop ended unexpectedly")
 
 
 SYSTEM_PROMPT = """You are The Hiring Manager, a supernatural presence haunting a multiplayer
@@ -95,6 +141,23 @@ the in-game chat. Your entire output must be exactly `<reply>YOUR SPOKEN DIALOGU
 Do not place analysis, planning, explanations, or any other text inside or outside those tags."""
 
 REASONING_FALLBACK = "The office heard you. Its answer is still crawling through the walls."
+
+
+def fit_chat_reply(content: str, limit: int = 300) -> str:
+    """Fit dialogue in chat without ending on a partial word or sentence."""
+    cleaned = content.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+
+    candidate = cleaned[: limit - 1].rstrip()
+    sentence_end = max(candidate.rfind(mark) for mark in ".!?")
+    if sentence_end >= limit // 3:
+        return candidate[: sentence_end + 1]
+
+    word_end = candidate.rfind(" ")
+    if word_end > 0:
+        candidate = candidate[:word_end].rstrip()
+    return f"{candidate}…"
 
 
 def extract_spoken_reply(content: str) -> str:
@@ -163,7 +226,7 @@ class LobbyLlmResponder:
             },
         ]
         response = extract_spoken_reply(await self.provider.complete(messages))
-        return response[:300].strip()
+        return fit_chat_reply(response)
 
     async def _build_context(
         self, database: AsyncDatabase, players: list[LobbyPlayer]
@@ -252,6 +315,9 @@ def create_lobby_llm_responder(settings: Settings) -> LobbyLlmResponder | None:
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
         temperature=settings.llm_temperature,
+        top_p=settings.llm_top_p,
+        reasoning_effort=settings.llm_reasoning_effort,
         max_tokens=settings.llm_max_tokens,
+        retry_max_tokens=settings.llm_retry_max_tokens,
     )
     return LobbyLlmResponder(provider, settings.llm_job_context_limit)

@@ -91,6 +91,11 @@ that use a different request or response shape can be added behind the `ChatComp
 interface in `app/services/llm.py`. See `.env.example` for the optional timeout, temperature,
 response-token, display-name, and job-context settings.
 
+Reasoning models can spend much of `LLM_MAX_TOKENS` before producing visible text. For K2 Horizon,
+set `LLM_REASONING_EFFORT=low` for this short-dialogue use case. The provider logs each response's
+`finish_reason` and retries once with `LLM_RETRY_MAX_TOKENS` when the first completion ends because
+it reached the token limit; a still-truncated retry is rejected instead of broadcast to players.
+
 `LLM_CHAT_HISTORY_LIMIT` controls the rolling chat context independently from
 `LLM_JOB_CONTEXT_LIMIT`. It defaults to the latest five player/model messages, including the
 current player message.

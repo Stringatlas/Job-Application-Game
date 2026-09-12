@@ -9,6 +9,7 @@ from app.services.llm import (
     ChatMessage,
     LobbyLlmResponder,
     extract_spoken_reply,
+    fit_chat_reply,
 )
 from app.websocket.manager import LobbyChatMessage, LobbyPlayer
 
@@ -166,8 +167,8 @@ def test_lobby_llm_receives_applied_and_unapplied_job_context() -> None:
     assert "The ledger opens." in prompt
 
 
-def test_lobby_llm_caps_chat_response_at_300_characters() -> None:
-    provider = FakeProvider("x" * 350)
+def test_lobby_llm_caps_chat_response_without_cutting_a_word() -> None:
+    provider = FakeProvider(("word " * 70).strip())
     responder = LobbyLlmResponder(provider)
     database = FakeDatabase([], [], [])
 
@@ -180,7 +181,15 @@ def test_lobby_llm_caps_chat_response_at_300_characters() -> None:
         )
     )
 
-    assert response == "x" * 300
+    assert len(response) <= 300
+    assert response.endswith("…")
+    assert response[:-1].endswith("word")
+
+
+def test_fit_chat_reply_prefers_a_complete_sentence() -> None:
+    first_sentence = "The ledger has five names."
+
+    assert fit_chat_reply(f"{first_sentence} {'x' * 300}") == first_sentence
 
 
 def test_lobby_llm_extracts_spoken_reply_after_reasoning() -> None:
