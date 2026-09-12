@@ -191,12 +191,58 @@ class FakeRatingsCollection:
         return SimpleNamespace(deleted_count=original_count - len(self.documents))
 
 
+class FakeApplicationsCollection:
+    def __init__(self) -> None:
+        self.documents: list[dict] = []
+
+    def find(self, query: dict) -> FakeJobCursor:
+        matches = [
+            document
+            for document in self.documents
+            if all(document.get(key) == value for key, value in query.items())
+        ]
+        return FakeJobCursor(matches)
+
+    async def find_one_and_update(self, query: dict, update: dict, **_options: object) -> dict:
+        document = next(
+            (
+                candidate
+                for candidate in self.documents
+                if all(candidate.get(key) == value for key, value in query.items())
+            ),
+            None,
+        )
+        if document is None:
+            document = {
+                "_id": ObjectId(),
+                **query,
+                **update.get("$setOnInsert", {}),
+            }
+            self.documents.append(document)
+        document.update(update.get("$set", {}))
+        return document
+
+    async def delete_many(self, query: dict) -> SimpleNamespace:
+        original_count = len(self.documents)
+        self.documents = [
+            document
+            for document in self.documents
+            if not all(document.get(key) == value for key, value in query.items())
+        ]
+        return SimpleNamespace(deleted_count=original_count - len(self.documents))
+
+
 class FakeOwnedJobsDatabase:
     def __init__(self, profile: dict, documents: list[dict]) -> None:
         self.users = FakeUsersCollection()
         self.users.document = profile
         self.jobs = FakeOwnedJobsCollection(documents)
         self.job_ratings = FakeRatingsCollection()
+        self.job_applications = FakeApplicationsCollection()
+
+
+class FakeApplicationDatabase(FakeOwnedJobsDatabase):
+    pass
 
 
 class FakeRateLimitCollection:
@@ -396,6 +442,16 @@ def test_owner_can_manage_and_rate_their_own_jobs() -> None:
             job_document(other_job_id, ObjectId(), "Someone else's listing"),
         ],
     )
+    database.job_applications.documents.append(
+        {
+            "_id": ObjectId(),
+            "user_id": owner_id,
+            "job_listing_id": own_job_id,
+            "status": "applied",
+            "applied_at": now,
+            "updated_at": now,
+        }
+    )
     app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|job-owner")
     app.dependency_overrides[get_ready_database] = lambda: database
     try:
@@ -449,6 +505,62 @@ def test_owner_can_manage_and_rate_their_own_jobs() -> None:
     assert forbidden_delete_response.status_code == 404
     assert delete_response.status_code == 204
     assert [job["_id"] for job in database.jobs.documents] == [other_job_id]
+    assert database.job_applications.documents == []
+
+
+def test_user_can_record_and_list_job_applications() -> None:
+    now = datetime.now(UTC)
+    user_id = ObjectId()
+    job_id = ObjectId()
+    profile = {"_id": user_id, "auth0_sub": "auth0|applicant"}
+    job = {
+        "_id": job_id,
+        "title": "Software Engineer Intern",
+        "created_at": now,
+    }
+    database = FakeApplicationDatabase(profile, [job])
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|applicant")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            create_response = client.put(
+                "/api/users/me/applications",
+                json={"job_listing_id": str(job_id)},
+            )
+            update_response = client.put(
+                "/api/users/me/applications",
+                json={"job_listing_id": str(job_id), "status": "interviewing"},
+            )
+            list_response = client.get("/api/users/me/applications")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert create_response.status_code == 200
+    assert create_response.json()["status"] == "applied"
+    assert create_response.json()["job_listing_id"] == str(job_id)
+    assert update_response.status_code == 200
+    assert update_response.json()["status"] == "interviewing"
+    assert update_response.json()["applied_at"] == create_response.json()["applied_at"]
+    assert list_response.status_code == 200
+    assert list_response.json() == [update_response.json()]
+
+
+def test_record_application_rejects_unknown_job() -> None:
+    profile = {"_id": ObjectId(), "auth0_sub": "auth0|applicant"}
+    database = FakeApplicationDatabase(profile, [])
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(sub="auth0|applicant")
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            response = client.put(
+                "/api/users/me/applications",
+                json={"job_listing_id": str(ObjectId())},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Job not found"}
 
 
 def test_me_requires_bearer_token() -> None:

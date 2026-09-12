@@ -33,6 +33,22 @@ export interface JobRating {
 	stale: boolean;
 }
 
+export type JobApplicationStatus =
+	| 'applied'
+	| 'interviewing'
+	| 'offer'
+	| 'rejected'
+	| 'withdrawn';
+
+export interface JobApplication {
+	id: string;
+	user_id: string;
+	job_listing_id: string;
+	status: JobApplicationStatus;
+	applied_at: string;
+	updated_at: string;
+}
+
 export interface WebSocketTicket {
 	ticket: string;
 	expires_in: number;

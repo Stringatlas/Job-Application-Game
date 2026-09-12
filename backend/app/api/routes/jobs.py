@@ -248,6 +248,7 @@ async def delete_job(
     if result.deleted_count == 0:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
     await database.job_ratings.delete_many({"job_listing_id": ObjectId(job_id)})
+    await database.job_applications.delete_many({"job_listing_id": ObjectId(job_id)})
 
 
 @router.get("/{job_id}", response_model=JobListing)

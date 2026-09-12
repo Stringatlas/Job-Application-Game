@@ -1,6 +1,14 @@
 import { env } from '$env/dynamic/public';
 import { auth } from '$lib/auth/auth-store';
-import type { JobListing, JobListingCreate, JobRating, UserProfile, WebSocketTicket } from './types';
+import type {
+	JobApplication,
+	JobApplicationStatus,
+	JobListing,
+	JobListingCreate,
+	JobRating,
+	UserProfile,
+	WebSocketTicket
+} from './types';
 
 const API_BASE_URL = (env.PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -103,6 +111,20 @@ export function rateJobListing(id: string, rating: JobRating): Promise<JobListin
 	return request<JobListing>(`/api/jobs/${id}/rating`, {
 		method: 'PUT',
 		body: JSON.stringify(rating)
+	});
+}
+
+export function listMyJobApplications(): Promise<JobApplication[]> {
+	return request<JobApplication[]>('/api/users/me/applications');
+}
+
+export function recordJobApplication(
+	jobListingId: string,
+	status: JobApplicationStatus = 'applied'
+): Promise<JobApplication> {
+	return request<JobApplication>('/api/users/me/applications', {
+		method: 'PUT',
+		body: JSON.stringify({ job_listing_id: jobListingId, status })
 	});
 }
 

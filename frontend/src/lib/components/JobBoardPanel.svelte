@@ -5,12 +5,14 @@
 		createJobListing,
 		deleteJobListing,
 		getMyJobRating,
+		listMyJobApplications,
 		listJobListings,
 		listMyJobListings,
 		rateJobListing,
+		recordJobApplication,
 		updateJobListing
 	} from '$lib/api/client';
-	import type { JobListing, JobListingCreate } from '$lib/api/types';
+	import type { JobApplication, JobListing, JobListingCreate } from '$lib/api/types';
 
 	interface Props {
 		onClose: () => void;
@@ -24,6 +26,9 @@
 	let myJobsLoading = $state(true);
 	let jobsError = $state<string | null>(null);
 	let myJobsError = $state<string | null>(null);
+	let applicationsError = $state<string | null>(null);
+	let applicationsByJob = $state<Record<string, JobApplication>>({});
+	let applyingJobIds = $state<string[]>([]);
 	let title = $state('');
 	let company = $state('');
 	let location = $state('');
@@ -46,7 +51,23 @@
 	onMount(() => {
 		void loadJobs();
 		void loadMyJobs();
+		void loadApplications();
 	});
+
+	async function loadApplications(): Promise<void> {
+		applicationsError = null;
+		try {
+			const applications = await listMyJobApplications();
+			applicationsByJob = {
+				...Object.fromEntries(
+					applications.map((application) => [application.job_listing_id, application])
+				),
+				...applicationsByJob
+			};
+		} catch (loadError) {
+			applicationsError = readableError(loadError);
+		}
+	}
 
 	async function loadJobs(): Promise<void> {
 		jobsLoading = true;
@@ -214,6 +235,19 @@
 			ratingSubmitting = false;
 		}
 	}
+
+	async function markApplied(job: JobListing): Promise<void> {
+		if (applicationsByJob[job.id] || applyingJobIds.includes(job.id)) return;
+		applyingJobIds = [...applyingJobIds, job.id];
+		try {
+			const application = await recordJobApplication(job.id);
+			applicationsByJob = { ...applicationsByJob, [job.id]: application };
+		} catch (applicationError) {
+			applicationsError = readableError(applicationError);
+		} finally {
+			applyingJobIds = applyingJobIds.filter((id) => id !== job.id);
+		}
+	}
 </script>
 
 <svelte:window onkeydown={(event) => event.key === 'Escape' && (ratingJob ? closeRating() : !submitting && onClose())} />
@@ -236,6 +270,7 @@
 		{#if view === 'browse'}
 			<div class="listing-view">
 				{#if successMessage}<p class="success" role="status">{successMessage}</p>{/if}
+				{#if applicationsError}<p class="error" role="alert">{applicationsError} <button type="button" onclick={loadApplications}>Retry</button></p>{/if}
 				{#if jobsLoading}
 					<p class="empty-state">Reading the board…</p>
 				{:else if jobsError}
@@ -245,9 +280,12 @@
 				{:else}
 					<div class="listings">
 						{#each jobs as job (job.id)}
-							<article class="listing-card">
+							<article class:applied={Boolean(applicationsByJob[job.id])} class="listing-card">
 								<div class="listing-copy">
-									<p>{job.company}</p>
+									<div class="listing-eyebrow">
+										<p>{job.company}</p>
+										{#if applicationsByJob[job.id]}<span>Applied</span>{/if}
+									</div>
 									<h2>{job.title}</h2>
 									<div class="metadata"><span>{job.location}</span>{#if job.remote}<span>Remote</span>{/if}</div>
 									{#if job.rating_count > 0}<p class="rating-summary"><span aria-hidden="true">★</span> {job.average_rating?.toFixed(1)} from {job.rating_count} rating{job.rating_count === 1 ? '' : 's'} · {job.stale_votes} stale vote{job.stale_votes === 1 ? '' : 's'}</p>{/if}
@@ -256,7 +294,20 @@
 								</div>
 								<div class="card-actions">
 									<button type="button" onclick={() => openRating(job)}>Rate listing</button>
-									<a href={job.external_url} target="_blank" rel="noopener noreferrer">Apply <span aria-hidden="true">↗</span></a>
+									<a
+										class:application-recorded={Boolean(applicationsByJob[job.id])}
+										href={job.external_url}
+										target="_blank"
+										rel="noopener noreferrer"
+										onclick={() => void markApplied(job)}
+									>
+										{applicationsByJob[job.id]
+											? 'Applied'
+											: applyingJobIds.includes(job.id)
+												? 'Marking…'
+												: 'Apply'}
+										<span aria-hidden="true">↗</span>
+									</a>
 								</div>
 							</article>
 						{/each}
@@ -385,8 +436,11 @@
 	.listing-view { padding: clamp(1.25rem, 4vw, 2rem); }
 	.listings { display: grid; gap: .75rem; }
 	.listing-card { display: flex; align-items: center; gap: 1rem; padding: 1.1rem; border: 1px solid rgba(211,203,137,.15); background: #121610; }
+	.listing-card.applied { border-color: rgba(126,190,145,.32); background: linear-gradient(90deg, rgba(55,105,70,.12), #121610 35%); }
 	.listing-copy { min-width: 0; flex: 1; }
-	.listing-copy > p:first-child { margin: 0 0 .35rem; color: #8e8a61; font: 600 .58rem/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
+	.listing-eyebrow { display: flex; align-items: center; gap: .55rem; margin-bottom: .35rem; }
+	.listing-eyebrow p { margin: 0; color: #8e8a61; font: 600 .58rem/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
+	.listing-eyebrow span { padding: .2rem .38rem; border: 1px solid rgba(126,190,145,.3); background: rgba(55,105,70,.18); color: #9fd1ac; font: 650 .5rem/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
 	.listing-card h2 { margin: 0; color: #e5e1bd; font-size: 1rem; line-height: 1.3; }
 	.metadata, .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .65rem; }
 	.metadata span, .tags span { padding: .25rem .4rem; background: rgba(198,191,126,.08); color: #929071; font: 500 .55rem/1 var(--font-mono); text-transform: uppercase; }
@@ -396,6 +450,7 @@
 	.card-actions { display: grid; flex: 0 0 auto; gap: .45rem; }
 	.card-actions button, .card-actions a { min-width: 7rem; padding: .7rem .8rem; border: 1px solid rgba(211,203,137,.28); background: transparent; color: #d9d199; font: 600 .62rem/1 var(--font-mono); text-align: center; text-decoration: none; text-transform: uppercase; cursor: pointer; }
 	.card-actions button:hover, .card-actions a:hover { border-color: #d9d199; background: rgba(211,203,137,.07); }
+	.card-actions a.application-recorded { border-color: rgba(126,190,145,.32); color: #9fd1ac; }
 	.listing-actions { display: flex; flex: 0 0 auto; gap: .5rem; }
 	.listing-actions button { min-height: 2.35rem; padding: 0 .75rem; border: 1px solid rgba(211,203,137,.28); background: transparent; color: #d9d199; font: 600 .62rem/1 var(--font-mono); text-transform: uppercase; cursor: pointer; }
 	.listing-actions button:hover { border-color: #d9d199; background: rgba(211,203,137,.07); }
