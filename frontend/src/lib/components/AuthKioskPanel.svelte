@@ -72,7 +72,7 @@
 </div>
 
 <style>
-	.backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1.25rem; background: rgba(1,4,3,.58); backdrop-filter: blur(9px); }
+	.backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1.25rem; background: rgba(1,4,3,.58); backdrop-filter: blur(3px); }
 	.panel { width: min(33rem, 100%); overflow: hidden; border: 1px solid rgba(141,255,201,.27); border-radius: 2px; background: rgba(10,15,13,.97); box-shadow: 0 32px 100px rgba(0,0,0,.72), 0 0 60px rgba(77,255,168,.06); color: #eef8f2; }
 	.terminal-bar { display: flex; align-items: center; gap: .6rem; min-height: 2.7rem; padding-left: 1rem; border-bottom: 1px solid rgba(141,255,201,.15); background: #0c1210; color: #82958b; font: 600 .62rem/1 var(--font-mono); letter-spacing: .1em; }
 	.status-light { width: .45rem; height: .45rem; border-radius: 50%; background: #76f8bb; box-shadow: 0 0 10px #76f8bb; }

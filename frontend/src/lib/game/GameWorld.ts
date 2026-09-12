@@ -20,17 +20,17 @@ export class GameWorld {
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
 	private disposed = false;
+	/** 帧性能探针：卡顿时控制台直接报告哪一段在堵 */
+	private readonly perfFrames: number[] = [];
 	private authenticated = false;
 
 	constructor(
 		private readonly container: HTMLElement,
 		private readonly events: GameWorldEvents
 	) {
-		this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+		this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 		// 1x 渲染即可获得流畅帧率；2x(或屏幕真实 DPR)会增加 2-4 倍像素负载，集显/小机容易掉帧卡顿
 		this.renderer.setPixelRatio(1);
-		this.renderer.shadowMap.enabled = true;
-		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
 		this.renderer.toneMappingExposure = 1.1;
@@ -145,18 +145,42 @@ export class GameWorld {
 	private animate = (): void => {
 		if (this.disposed) return;
 		this.animationFrame = requestAnimationFrame(this.animate);
+		const frameStart = performance.now();
 		const delta = this.clock.getDelta();
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
 		for (const door of Object.values(this.world.doors)) {
 			const target = door.open ? 1 : 0;
 			door.progress = THREE.MathUtils.damp(door.progress, target, 6, delta);
-			door.leaf.rotation.y = -door.progress * Math.PI * 0.52;
+			door.leaf.rotation.y = door.progress * Math.PI * 0.52;
 		}
 		const pulse = 1 + Math.sin(this.clock.elapsedTime * 2.1) * 0.006;
 		this.world.loginKiosk.scale.setScalar(pulse);
 		this.renderer.render(this.world.scene, this.camera);
+		this.reportFrameCost(frameStart, delta, performance.now());
 	};
+
+	/** 每 240 帧汇总一次；>60ms 的单帧直接告警 */
+	private reportFrameCost(frameStart: number, deltaSeconds: number, renderEnd: number): void {
+		const totalMs = renderEnd - frameStart;
+		this.perfFrames.push(totalMs);
+		if (totalMs > 60) {
+			console.warn(
+				`[JAG perf] slow frame ${totalMs.toFixed(1)}ms (delta ${deltaSeconds.toFixed(3)}s) — 若此条频繁出现且 mean 很低，说明卡顿由页面层长任务（面板/授权网络）阻塞 rAF，而非渲染本身；反之 mean 偏高则是真正每帧渲染超负。`
+			);
+		}
+		if (this.perfFrames.length >= 240) {
+			let worst = 0;
+			let sum = 0;
+			for (const value of this.perfFrames) {
+				worst = Math.max(worst, value);
+				sum += value;
+			}
+			this.perfFrames.length = 0;
+			const mean = (sum / 240).toFixed(2);
+			console.info(`[JAG perf] 240 frames: mean ${mean}ms worst ${worst.toFixed(1)}ms`);
+		}
+	}
 
 	private resize = (): void => {
 		const width = Math.max(this.container.clientWidth, 1);

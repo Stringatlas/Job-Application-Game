@@ -150,13 +150,21 @@ function buildDoorGroup(
 	const doorMaterial = track(
 		new THREE.MeshStandardMaterial({ color: '#4f4a2f', roughness: 0.6, metalness: 0.12 })
 	);
-	const leaf = new THREE.Mesh(
-		alongZ ? new THREE.BoxGeometry(0.14, 3.7, door.width) : new THREE.BoxGeometry(door.width, 3.7, 0.14),
-		doorMaterial
-	);
-	leaf.position.set(alongZ ? 0 : door.width / 2, 1.85, alongZ ? door.width / 2 : 0);
-	leaf.castShadow = true;
-	group.add(leaf);
+	let leafGeometry: THREE.BoxGeometry;
+if (alongZ) {
+    // Door oriented along Z axis, hinge at the start (positive Z side of opening)
+    leafGeometry = new THREE.BoxGeometry(0.14, 3.7, door.width);
+    // Move geometry so its local origin is at the hinge (positive Z edge)
+    leafGeometry.translate(0, 0, door.width / 2);
+} else {
+    // Door oriented along X axis, hinge at the start (positive X side)
+    leafGeometry = new THREE.BoxGeometry(door.width, 3.7, 0.14);
+    leafGeometry.translate(door.width / 2, 0, 0);
+}
+const leaf = new THREE.Mesh(leafGeometry, doorMaterial);
+leaf.position.set(0, 1.85, 0);
+leaf.castShadow = true;
+group.add(leaf);
 
 	const handle = new THREE.Mesh(
 		new THREE.SphereGeometry(0.07, 12, 8),

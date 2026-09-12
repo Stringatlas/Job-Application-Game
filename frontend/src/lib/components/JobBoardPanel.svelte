@@ -223,7 +223,7 @@
 </div>
 
 <style>
-	.backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1.25rem; background: rgba(1,4,3,.68); backdrop-filter: blur(9px); }
+	.backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 1.25rem; background: rgba(1,4,3,.68); backdrop-filter: blur(3px); }
 	.board { width: min(48rem, 100%); max-height: calc(100dvh - 2.5rem); overflow: auto; border: 1px solid rgba(141,255,201,.27); border-radius: 2px; background: rgba(10,15,13,.98); box-shadow: 0 32px 100px rgba(0,0,0,.72), 0 0 60px rgba(77,255,168,.06); color: #eef8f2; }
 	.board-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; min-height: 5.4rem; padding: 1rem 1.25rem 1rem 1.5rem; border-bottom: 1px solid rgba(141,255,201,.15); background: rgba(12,18,16,.98); }
 	.board-header p { margin: 0 0 .4rem; color: #7ef0b4; font: 600 .58rem/1 var(--font-mono); letter-spacing: .13em; text-transform: uppercase; }
