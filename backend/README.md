@@ -18,6 +18,30 @@ The local API is available at `http://localhost:8000`, with interactive docs at
 - `GET /api/health/database` pings the configured MongoDB cluster.
 - `GET /api/users/me` validates an Auth0 bearer access token and returns its identity.
 
+## User, job, and application records
+
+All mutation routes require an Auth0 bearer token. Identity and ownership always come from the
+verified token rather than request data.
+
+- `PUT /api/users/me/profile` creates or updates the user's app profile. Usernames are 3–30
+  letters, numbers, or underscores and are unique without regard to case.
+- `GET /api/users/me/profile` returns the saved profile.
+- `POST /api/jobs` creates a job listing after the user has a profile.
+- `GET /api/jobs` returns the newest visible listings for the bulletin board.
+- `GET /api/jobs/{job_id}` returns a job listing.
+- `PUT /api/users/me/applications` records an application or updates its status using a
+  `job_listing_id` reference.
+- `GET /api/users/me/applications` lists the current user's application records.
+
+MongoDB uses separate `users`, `jobs`, and `job_applications` collections. Unique indexes enforce
+one Auth0 subject and case-insensitive username per user, one canonical URL per job, and one
+application record per user/job pair. These indexes are ensured lazily on the first database-backed
+API request so the basic health endpoint remains available during a database outage.
+
+Job creation is limited to five attempts per authenticated user per one-hour fixed window. The
+counter is updated atomically in MongoDB and a limited request receives `429` with a `Retry-After`
+header.
+
 To test the protected endpoint, obtain an access token from the frontend configured with the
 audience `https://api.job-application-game.com`, then run:
 
@@ -33,4 +57,3 @@ uv run ruff check .
 uv run ruff format --check .
 uv run pytest
 ```
-

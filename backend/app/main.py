@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.config import get_settings
-from app.db.mongodb import create_mongo_client
+from app.db.mongodb import create_mongo_client, initialize_database_state
 
 
 @asynccontextmanager
@@ -15,6 +15,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     client = create_mongo_client(settings)
     app.state.mongo_client = client
     app.state.database = client[settings.mongodb_database]
+    initialize_database_state(app)
     try:
         yield
     finally:
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Retry-After"],
     )
     application.include_router(api_router)
     return application

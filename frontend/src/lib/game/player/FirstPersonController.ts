@@ -16,12 +16,15 @@ export class FirstPersonController {
 	private pitch = 0;
 	private enabled = true;
 	private readonly eyeHeight = 1.65;
+	private verticalVelocity = 0;
+	private grounded = true;
 
 	constructor(
 		private readonly camera: THREE.PerspectiveCamera,
 		private readonly element: HTMLElement,
 		private readonly bounds: PlayerBounds,
-		private readonly onLockChange: (locked: boolean) => void
+		private readonly onLockChange: (locked: boolean) => void,
+		private readonly canOccupy: (position: THREE.Vector3) => boolean = () => true
 	) {
 		this.camera.rotation.order = 'YXZ';
 		window.addEventListener('keydown', this.handleKeyDown);
@@ -47,23 +50,45 @@ export class FirstPersonController {
 
 		const horizontal = Number(this.pressed.has('KeyD')) - Number(this.pressed.has('KeyA'));
 		const vertical = Number(this.pressed.has('KeyW')) - Number(this.pressed.has('KeyS'));
-		if (horizontal === 0 && vertical === 0) return;
+		const delta = Math.min(deltaSeconds, 0.05);
 
-		this.camera.getWorldDirection(this.forward);
-		this.forward.y = 0;
-		this.forward.normalize();
-		this.right.crossVectors(this.forward, this.camera.up).normalize();
-		this.movement
-			.set(0, 0, 0)
-			.addScaledVector(this.forward, vertical)
-			.addScaledVector(this.right, horizontal)
-			.normalize();
+		if (horizontal !== 0 || vertical !== 0) {
+			this.camera.getWorldDirection(this.forward);
+			this.forward.y = 0;
+			this.forward.normalize();
+			this.right.crossVectors(this.forward, this.camera.up).normalize();
+			this.movement
+				.set(0, 0, 0)
+				.addScaledVector(this.forward, vertical)
+				.addScaledVector(this.right, horizontal)
+				.normalize();
 
-		const speed = this.pressed.has('ShiftLeft') ? 5.4 : 3.4;
-		this.camera.position.addScaledVector(this.movement, speed * Math.min(deltaSeconds, 0.05));
-		this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, this.bounds.minX, this.bounds.maxX);
-		this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, this.bounds.minZ, this.bounds.maxZ);
-		this.camera.position.y = this.eyeHeight;
+			const speed = this.pressed.has('ShiftLeft') ? 5.4 : 3.4;
+			const distance = speed * delta;
+			const candidate = this.camera.position.clone();
+			candidate.x = THREE.MathUtils.clamp(
+				candidate.x + this.movement.x * distance,
+				this.bounds.minX,
+				this.bounds.maxX
+			);
+			if (this.canOccupy(candidate)) this.camera.position.x = candidate.x;
+
+			candidate.copy(this.camera.position);
+			candidate.z = THREE.MathUtils.clamp(
+				candidate.z + this.movement.z * distance,
+				this.bounds.minZ,
+				this.bounds.maxZ
+			);
+			if (this.canOccupy(candidate)) this.camera.position.z = candidate.z;
+		}
+
+		this.verticalVelocity -= 18 * delta;
+		this.camera.position.y += this.verticalVelocity * delta;
+		if (this.camera.position.y <= this.eyeHeight) {
+			this.camera.position.y = this.eyeHeight;
+			this.verticalVelocity = 0;
+			this.grounded = true;
+		}
 	}
 
 	dispose(): void {
@@ -75,7 +100,12 @@ export class FirstPersonController {
 	}
 
 	private handleKeyDown = (event: KeyboardEvent): void => {
-		if (this.enabled) this.pressed.add(event.code);
+		if (!this.enabled) return;
+		this.pressed.add(event.code);
+		if (event.code === 'Space' && !event.repeat && this.grounded) {
+			this.verticalVelocity = 6.2;
+			this.grounded = false;
+		}
 	};
 
 	private handleKeyUp = (event: KeyboardEvent): void => {

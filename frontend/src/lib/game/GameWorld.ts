@@ -6,6 +6,7 @@ import { createOfficeScene } from './scene/createOfficeScene';
 export interface GameWorldEvents {
 	onInteractionChange: (interaction: ActiveInteraction | null) => void;
 	onLoginKioskUse: () => void;
+	onJobBoardUse: () => void;
 	onPointerLockChange: (locked: boolean) => void;
 }
 
@@ -19,6 +20,8 @@ export class GameWorld {
 	private readonly resizeObserver: ResizeObserver;
 	private animationFrame = 0;
 	private disposed = false;
+	private authenticated = false;
+	private doorOpenProgress = 0;
 
 	constructor(
 		private readonly container: HTMLElement,
@@ -30,22 +33,22 @@ export class GameWorld {
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-		this.renderer.toneMappingExposure = 0.85;
+		this.renderer.toneMappingExposure = 1.1;
 		this.renderer.domElement.className = 'game-canvas';
 		this.renderer.domElement.setAttribute('aria-label', 'First-person office scene');
 		this.container.appendChild(this.renderer.domElement);
 
 		this.camera = new THREE.PerspectiveCamera(72, 1, 0.08, 80);
-		const returningFromLogin = sessionStorage.getItem('jag:spawn') === 'login-kiosk';
-		this.camera.position.set(0, 1.65, returningFromLogin ? 3.1 : 8);
-		if (returningFromLogin) sessionStorage.removeItem('jag:spawn');
+		this.camera.position.set(0, 1.65, 8.15);
+		sessionStorage.removeItem('jag:spawn');
 		this.office = createOfficeScene();
 		this.interactions = new InteractionSystem(events.onInteractionChange);
 		this.controller = new FirstPersonController(
 			this.camera,
 			this.renderer.domElement,
-			{ minX: -8.4, maxX: 8.4, minZ: -11.2, maxZ: 11.2 },
-			events.onPointerLockChange
+			{ minX: -6.75, maxX: 6.75, minZ: -9, maxZ: 9.5 },
+			events.onPointerLockChange,
+			this.canOccupy
 		);
 
 		this.interactions.register({
@@ -55,9 +58,20 @@ export class GameWorld {
 			maxDistance: 3.4,
 			minimumFacing: 0.35,
 			onFocusChange: (focused) => {
-				this.office.loginScreenMaterial.emissiveIntensity = focused ? 1.15 : 0.32;
+				this.office.loginScreenMaterial.emissiveIntensity = focused ? 0.72 : 0.32;
 			},
 			onInteract: events.onLoginKioskUse
+		});
+		this.interactions.register({
+			id: 'job-board',
+			object: this.office.jobBoard,
+			prompt: 'E  Open job board',
+			maxDistance: 4.2,
+			minimumFacing: 0.25,
+			onFocusChange: (focused) => {
+				this.office.jobBoardMaterial.emissiveIntensity = focused ? 0.24 : 0.08;
+			},
+			onInteract: events.onJobBoardUse
 		});
 
 		this.renderer.domElement.addEventListener('click', this.handleCanvasClick);
@@ -77,6 +91,7 @@ export class GameWorld {
 	}
 
 	setAuthenticated(authenticated: boolean): void {
+		this.authenticated = authenticated;
 		this.interactions.updatePrompt('login-kiosk', authenticated ? 'E  View player pass' : 'E  Check in');
 	}
 
@@ -100,6 +115,14 @@ export class GameWorld {
 		const delta = this.clock.getDelta();
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
+		const doorTarget = this.authenticated ? 1 : 0;
+		this.doorOpenProgress = THREE.MathUtils.damp(
+			this.doorOpenProgress,
+			doorTarget,
+			4.5,
+			delta
+		);
+		this.office.closetDoor.rotation.y = -this.doorOpenProgress * Math.PI * 0.52;
 		const pulse = 1 + Math.sin(this.clock.elapsedTime * 2.1) * 0.006;
 		this.office.loginKiosk.scale.setScalar(pulse);
 		this.renderer.render(this.office.scene, this.camera);
@@ -114,6 +137,25 @@ export class GameWorld {
 	};
 
 	private handleCanvasClick = (): void => this.controller.requestPointerLock();
+
+	private canOccupy = (position: THREE.Vector3): boolean => {
+		if (position.z > 5.5 && Math.abs(position.x) > 2.08) return false;
+		if (position.z > 4.94 && position.z < 5.52 && Math.abs(position.x) > 0.72) return false;
+		if (
+			this.doorOpenProgress < 0.82 &&
+			position.z > 5.12 &&
+			position.z < 5.52 &&
+			Math.abs(position.x) <= 0.95
+		) {
+			return false;
+		}
+		const hitsDesk =
+			position.x > 1.15 &&
+			position.x < 5.05 &&
+			position.z > -3.5 &&
+			position.z < -1.3;
+		return !hitsDesk;
+	};
 
 	private handleInteractionKey = (event: KeyboardEvent): void => {
 		if (event.code === 'KeyE' && !event.repeat && document.pointerLockElement) {
