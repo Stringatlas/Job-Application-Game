@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     llm_display_name: str = "The Hiring Manager"
     llm_timeout_seconds: float = Field(default=20, gt=0, le=120)
     llm_temperature: float = Field(default=0.85, ge=0, le=2)
-    llm_max_tokens: int = Field(default=160, ge=1, le=2_000)
+    llm_max_tokens: int = Field(default=512, ge=1, le=2_000)
     llm_job_context_limit: int = Field(default=50, ge=1, le=200)
     llm_chat_history_limit: int = Field(default=5, ge=1, le=20)
 

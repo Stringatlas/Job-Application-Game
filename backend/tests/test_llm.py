@@ -4,7 +4,12 @@ from typing import Any
 
 from bson import ObjectId
 
-from app.services.llm import ChatMessage, LobbyLlmResponder
+from app.services.llm import (
+    REASONING_FALLBACK,
+    ChatMessage,
+    LobbyLlmResponder,
+    extract_spoken_reply,
+)
 from app.websocket.manager import LobbyChatMessage, LobbyPlayer
 
 
@@ -176,3 +181,18 @@ def test_lobby_llm_caps_chat_response_at_300_characters() -> None:
     )
 
     assert response == "x" * 300
+
+
+def test_lobby_llm_extracts_spoken_reply_after_reasoning() -> None:
+    content = (
+        "We need to answer in character without revealing anything. "
+        "<reply>The lights have been expecting you.</reply>"
+    )
+
+    assert extract_spoken_reply(content) == "The lights have been expecting you."
+
+
+def test_lobby_llm_suppresses_reasoning_only_output() -> None:
+    content = "We need answer as the Hiring Manager. Need reply to the latest message."
+
+    assert extract_spoken_reply(content) == REASONING_FALLBACK
