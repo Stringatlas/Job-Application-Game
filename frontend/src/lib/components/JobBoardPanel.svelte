@@ -3,9 +3,14 @@
 	import {
 		ApiError,
 		createJobListing,
+		deleteJobListing,
+		getMyJobRating,
 		getMyProfile,
 		listJobListings,
-		saveMyProfile
+		listMyJobListings,
+		rateJobListing,
+		saveMyProfile,
+		updateJobListing
 	} from '$lib/api/client';
 	import type { JobListing, JobListingCreate } from '$lib/api/types';
 
@@ -15,10 +20,13 @@
 	}
 
 	let { suggestedDisplayName = null, onClose }: Props = $props();
-	let view = $state<'browse' | 'post'>('browse');
+	let view = $state<'browse' | 'mine' | 'post'>('browse');
 	let jobs = $state<JobListing[]>([]);
+	let myJobs = $state<JobListing[]>([]);
 	let jobsLoading = $state(true);
+	let myJobsLoading = $state(true);
 	let jobsError = $state<string | null>(null);
+	let myJobsError = $state<string | null>(null);
 	let profileState = $state<'loading' | 'ready' | 'missing'>('loading');
 	let username = $state('');
 	let title = $state('');
@@ -29,12 +37,21 @@
 	let description = $state('');
 	let tags = $state('');
 	let submitting = $state(false);
+	let deletingId = $state<string | null>(null);
+	let editingJobId = $state<string | null>(null);
 	let error = $state<string | null>(null);
-	let postedTitle = $state<string | null>(null);
+	let successMessage = $state<string | null>(null);
+	let ratingJob = $state<JobListing | null>(null);
+	let ratingStars = $state(0);
+	let ratingStale = $state(false);
+	let ratingLoading = $state(false);
+	let ratingSubmitting = $state(false);
+	let ratingError = $state<string | null>(null);
 
 	onMount(() => {
 		void loadProfile();
 		void loadJobs();
+		void loadMyJobs();
 	});
 
 	async function loadProfile(): Promise<void> {
@@ -64,6 +81,18 @@
 		}
 	}
 
+	async function loadMyJobs(): Promise<void> {
+		myJobsLoading = true;
+		myJobsError = null;
+		try {
+			myJobs = await listMyJobListings();
+		} catch (loadError) {
+			myJobsError = readableError(loadError);
+		} finally {
+			myJobsLoading = false;
+		}
+	}
+
 	function readableError(problem: unknown): string {
 		if (problem instanceof ApiError && problem.status === 429) {
 			const minutes = Math.max(1, Math.ceil((problem.retryAfterSeconds ?? 60) / 60));
@@ -72,7 +101,7 @@
 		if (problem instanceof ApiError && problem.status === 401) {
 			return 'Your session expired. Close the board and sign in again.';
 		}
-		return problem instanceof Error ? problem.message : 'The listing could not be posted.';
+		return problem instanceof Error ? problem.message : 'The listing request could not be completed.';
 	}
 
 	function resetListing(): void {
@@ -83,12 +112,34 @@
 		externalUrl = '';
 		description = '';
 		tags = '';
+		editingJobId = null;
+	}
+
+	function startNewListing(): void {
+		resetListing();
+		error = null;
+		successMessage = null;
+		view = 'post';
+	}
+
+	function startEditing(job: JobListing): void {
+		editingJobId = job.id;
+		title = job.title;
+		company = job.company;
+		location = job.location;
+		remote = job.remote;
+		externalUrl = job.external_url;
+		description = job.description ?? '';
+		tags = job.tags.join(', ');
+		error = null;
+		successMessage = null;
+		view = 'post';
 	}
 
 	async function submit(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		error = null;
-		postedTitle = null;
+		successMessage = null;
 		submitting = true;
 		try {
 			if (profileState === 'missing') {
@@ -108,20 +159,94 @@
 					.map((tag) => tag.trim())
 					.filter(Boolean)
 			};
-			const posted = await createJobListing(listing);
-			postedTitle = posted.title;
-			jobs = [posted, ...jobs];
+			if (editingJobId) {
+				const updated = await updateJobListing(editingJobId, listing);
+				jobs = jobs.map((job) => (job.id === updated.id ? updated : job));
+				myJobs = myJobs.map((job) => (job.id === updated.id ? updated : job));
+				successMessage = `${updated.title} was updated.`;
+				view = 'mine';
+			} else {
+				const posted = await createJobListing(listing);
+				jobs = [posted, ...jobs];
+				myJobs = [posted, ...myJobs];
+				successMessage = `${posted.title} is now on the board.`;
+				view = 'browse';
+			}
 			resetListing();
-			view = 'browse';
 		} catch (submitError) {
 			error = readableError(submitError);
 		} finally {
 			submitting = false;
 		}
 	}
+
+	async function removeJob(job: JobListing): Promise<void> {
+		if (!confirm(`Delete “${job.title}”? This cannot be undone.`)) return;
+		deletingId = job.id;
+		myJobsError = null;
+		successMessage = null;
+		try {
+			await deleteJobListing(job.id);
+			jobs = jobs.filter((listing) => listing.id !== job.id);
+			myJobs = myJobs.filter((listing) => listing.id !== job.id);
+			successMessage = `${job.title} was deleted.`;
+		} catch (deleteError) {
+			myJobsError = readableError(deleteError);
+		} finally {
+			deletingId = null;
+		}
+	}
+
+	async function openRating(job: JobListing): Promise<void> {
+		ratingJob = job;
+		ratingStars = 0;
+		ratingStale = false;
+		ratingError = null;
+		ratingLoading = true;
+		try {
+			const existing = await getMyJobRating(job.id);
+			if (ratingJob?.id === job.id && existing) {
+				ratingStars = existing.stars;
+				ratingStale = existing.stale;
+			}
+		} catch (loadError) {
+			if (ratingJob?.id === job.id) ratingError = readableError(loadError);
+		} finally {
+			if (ratingJob?.id === job.id) ratingLoading = false;
+		}
+	}
+
+	function closeRating(): void {
+		if (!ratingSubmitting) ratingJob = null;
+	}
+
+	async function submitRating(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		if (!ratingJob || ratingStars < 1) return;
+		ratingError = null;
+		ratingSubmitting = true;
+		try {
+			if (profileState === 'missing') {
+				await saveMyProfile(username, suggestedDisplayName?.slice(0, 80) ?? null);
+				profileState = 'ready';
+			}
+			const updated = await rateJobListing(ratingJob.id, {
+				stars: ratingStars,
+				stale: ratingStale
+			});
+			jobs = jobs.map((job) => (job.id === updated.id ? updated : job));
+			myJobs = myJobs.map((job) => (job.id === updated.id ? updated : job));
+			successMessage = `Your rating for ${updated.title} was saved.`;
+			ratingJob = null;
+		} catch (submitError) {
+			ratingError = readableError(submitError);
+		} finally {
+			ratingSubmitting = false;
+		}
+	}
 </script>
 
-<svelte:window onkeydown={(event) => event.key === 'Escape' && !submitting && onClose()} />
+<svelte:window onkeydown={(event) => event.key === 'Escape' && (ratingJob ? closeRating() : !submitting && onClose())} />
 
 <div class="backdrop" role="presentation">
 	<div class="board" role="dialog" aria-modal="true" aria-labelledby="job-board-title">
@@ -134,18 +259,19 @@
 		</header>
 		<nav class="board-tabs" aria-label="Job board views">
 			<button class:active={view === 'browse'} type="button" onclick={() => (view = 'browse')}>Listings <span>{jobs.length}</span></button>
-			<button class:active={view === 'post'} type="button" onclick={() => (view = 'post')}>Post a listing</button>
+			<button class:active={view === 'mine'} type="button" onclick={() => (view = 'mine')}>Your posts <span>{myJobs.length}</span></button>
+			<button class:active={view === 'post'} type="button" onclick={startNewListing}>Post a listing</button>
 		</nav>
 
 		{#if view === 'browse'}
 			<div class="listing-view">
-				{#if postedTitle}<p class="success" role="status"><strong>{postedTitle}</strong> is now on the board.</p>{/if}
+				{#if successMessage}<p class="success" role="status">{successMessage}</p>{/if}
 				{#if jobsLoading}
 					<p class="empty-state">Reading the board…</p>
 				{:else if jobsError}
 					<div class="empty-state"><p>{jobsError}</p><button type="button" onclick={loadJobs}>Try again</button></div>
 				{:else if jobs.length === 0}
-					<div class="empty-state"><p>Nothing has been pinned here yet.</p><button type="button" onclick={() => (view = 'post')}>Post the first listing</button></div>
+					<div class="empty-state"><p>Nothing has been pinned here yet.</p><button type="button" onclick={startNewListing}>Post the first listing</button></div>
 				{:else}
 					<div class="listings">
 						{#each jobs as job (job.id)}
@@ -154,10 +280,44 @@
 									<p>{job.company}</p>
 									<h2>{job.title}</h2>
 									<div class="metadata"><span>{job.location}</span>{#if job.remote}<span>Remote</span>{/if}</div>
+									{#if job.rating_count > 0}<p class="rating-summary"><span aria-hidden="true">★</span> {job.average_rating?.toFixed(1)} from {job.rating_count} rating{job.rating_count === 1 ? '' : 's'} · {job.stale_votes} stale vote{job.stale_votes === 1 ? '' : 's'}</p>{/if}
 									{#if job.description}<p class="description">{job.description}</p>{/if}
 									{#if job.tags.length}<div class="tags">{#each job.tags as tag}<span>{tag}</span>{/each}</div>{/if}
 								</div>
-								<a href={job.external_url} target="_blank" rel="noopener noreferrer">Apply <span aria-hidden="true">↗</span></a>
+								<div class="card-actions">
+									<button type="button" onclick={() => openRating(job)}>Rate listing</button>
+									<a href={job.external_url} target="_blank" rel="noopener noreferrer">Apply <span aria-hidden="true">↗</span></a>
+								</div>
+							</article>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{:else if view === 'mine'}
+			<div class="listing-view">
+				{#if successMessage}<p class="success" role="status">{successMessage}</p>{/if}
+				{#if myJobsLoading}
+					<p class="empty-state">Finding your posts…</p>
+				{:else if myJobsError}
+					<div class="empty-state"><p>{myJobsError}</p><button type="button" onclick={loadMyJobs}>Try again</button></div>
+				{:else if myJobs.length === 0}
+					<div class="empty-state"><p>You haven’t posted a listing yet.</p><button type="button" onclick={startNewListing}>Post a listing</button></div>
+				{:else}
+					<div class="listings">
+						{#each myJobs as job (job.id)}
+							<article class="listing-card">
+								<div class="listing-copy">
+									<p>{job.company}</p>
+									<h2>{job.title}</h2>
+									<div class="metadata"><span>{job.location}</span>{#if job.remote}<span>Remote</span>{/if}</div>
+									{#if job.rating_count > 0}<p class="rating-summary"><span aria-hidden="true">★</span> {job.average_rating?.toFixed(1)} from {job.rating_count} rating{job.rating_count === 1 ? '' : 's'} · {job.stale_votes} stale vote{job.stale_votes === 1 ? '' : 's'}</p>{/if}
+									{#if job.description}<p class="description">{job.description}</p>{/if}
+								</div>
+								<div class="listing-actions">
+									<button type="button" onclick={() => openRating(job)} disabled={deletingId === job.id}>Rate listing</button>
+									<button type="button" onclick={() => startEditing(job)} disabled={deletingId === job.id}>Edit</button>
+									<button class="danger" type="button" onclick={() => removeJob(job)} disabled={deletingId === job.id}>{deletingId === job.id ? 'Deleting…' : 'Delete'}</button>
+								</div>
 							</article>
 						{/each}
 					</div>
@@ -165,7 +325,7 @@
 			</div>
 		{:else}
 		<form onsubmit={submit}>
-			<p class="intro">Share a direct employer listing with everyone in the office.</p>
+			<p class="intro">{editingJobId ? 'Update your listing on the office board.' : 'Share a direct employer listing with everyone in the office.'}</p>
 
 			{#if profileState === 'loading'}
 				<p class="notice">Loading your player profile…</p>
@@ -212,14 +372,48 @@
 				<footer>
 					<p>Limit: 5 submissions per hour</p>
 					<div>
-						<button class="secondary" type="button" onclick={onClose} disabled={submitting}>Cancel</button>
-						<button class="primary" type="submit" disabled={submitting}>{submitting ? 'Posting…' : 'Post listing'}</button>
+						<button class="secondary" type="button" onclick={() => editingJobId ? (view = 'mine') : onClose()} disabled={submitting}>Cancel</button>
+						<button class="primary" type="submit" disabled={submitting}>{submitting ? (editingJobId ? 'Saving…' : 'Posting…') : (editingJobId ? 'Save changes' : 'Post listing')}</button>
 					</div>
 				</footer>
 			{/if}
 		</form>
 		{/if}
 	</div>
+
+	{#if ratingJob}
+		<div class="rating-backdrop" role="presentation" onclick={(event) => event.target === event.currentTarget && closeRating()}>
+			<form class="rating-dialog" onsubmit={submitRating} aria-labelledby="rating-title">
+				<div class="rating-heading">
+					<div><p>Rate listing</p><h2 id="rating-title">{ratingJob.title}</h2></div>
+					<button type="button" onclick={closeRating} disabled={ratingSubmitting} aria-label="Close rating dialog">×</button>
+				</div>
+				{#if ratingLoading}
+					<p class="rating-loading">Loading your rating…</p>
+				{:else}
+					<fieldset>
+						<legend>Your rating</legend>
+						<div class="star-picker" aria-label={`${ratingStars || 'No'} stars selected`}>
+							{#each [1, 2, 3, 4, 5] as star}
+								<button class:chosen={star <= ratingStars} type="button" onclick={() => (ratingStars = star)} aria-label={`${star} star${star === 1 ? '' : 's'}`} aria-pressed={ratingStars === star}>★</button>
+							{/each}
+						</div>
+					</fieldset>
+					<label class="stale-toggle"><input type="checkbox" bind:checked={ratingStale} /><span>This listing appears stale</span></label>
+					{#if profileState === 'loading'}
+						<p class="notice">Loading your player profile…</p>
+					{:else if profileState === 'missing'}
+						<label class="rating-username"><span>Choose your username <small>Required once</small></span><input bind:value={username} required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autocomplete="username" placeholder="campus_recruit" /></label>
+					{/if}
+					{#if ratingError}<p class="error" role="alert">{ratingError}</p>{/if}
+					<div class="rating-footer">
+						<button class="secondary" type="button" onclick={closeRating} disabled={ratingSubmitting}>Cancel</button>
+						<button class="primary" type="submit" disabled={ratingSubmitting || ratingStars < 1 || profileState === 'loading'}>{ratingSubmitting ? 'Saving…' : 'Save rating'}</button>
+					</div>
+				{/if}
+			</form>
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -242,9 +436,34 @@
 	.listing-card h2 { margin: 0; color: #e5e1bd; font-size: 1rem; line-height: 1.3; }
 	.metadata, .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .65rem; }
 	.metadata span, .tags span { padding: .25rem .4rem; background: rgba(198,191,126,.08); color: #929071; font: 500 .55rem/1 var(--font-mono); text-transform: uppercase; }
+	.rating-summary { margin: .65rem 0 0; color: #cfc77f; font: 600 .65rem/1.4 var(--font-mono); }
+	.rating-summary span { color: #f0cf62; }
 	.description { display: -webkit-box; overflow: hidden; margin: .7rem 0 0; color: #8f9a8f; font-size: .75rem; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
-	.listing-card > a { flex: 0 0 auto; padding: .7rem .8rem; border: 1px solid rgba(211,203,137,.28); color: #d9d199; font: 600 .65rem/1 var(--font-mono); text-decoration: none; text-transform: uppercase; }
-	.listing-card > a:hover { border-color: #d9d199; background: rgba(211,203,137,.07); }
+	.card-actions { display: grid; flex: 0 0 auto; gap: .45rem; }
+	.card-actions button, .card-actions a { min-width: 7rem; padding: .7rem .8rem; border: 1px solid rgba(211,203,137,.28); background: transparent; color: #d9d199; font: 600 .62rem/1 var(--font-mono); text-align: center; text-decoration: none; text-transform: uppercase; cursor: pointer; }
+	.card-actions button:hover, .card-actions a:hover { border-color: #d9d199; background: rgba(211,203,137,.07); }
+	.listing-actions { display: flex; flex: 0 0 auto; gap: .5rem; }
+	.listing-actions button { min-height: 2.35rem; padding: 0 .75rem; border: 1px solid rgba(211,203,137,.28); background: transparent; color: #d9d199; font: 600 .62rem/1 var(--font-mono); text-transform: uppercase; cursor: pointer; }
+	.listing-actions button:hover { border-color: #d9d199; background: rgba(211,203,137,.07); }
+	.listing-actions button.danger { border-color: rgba(255,116,116,.3); color: #ffabab; }
+	.listing-actions button.danger:hover { border-color: #ff9a9a; background: rgba(117,31,31,.14); }
+	.rating-backdrop { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center; padding: 1rem; background: rgba(1,4,3,.78); backdrop-filter: blur(5px); }
+	.rating-dialog { width: min(28rem, 100%); padding: 1.4rem; border: 1px solid rgba(141,255,201,.28); background: #0c1210; box-shadow: 0 24px 80px rgba(0,0,0,.8); }
+	.rating-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+	.rating-heading p { margin: 0 0 .4rem; color: #7ef0b4; font: 600 .58rem/1 var(--font-mono); letter-spacing: .13em; text-transform: uppercase; }
+	.rating-heading h2 { margin: 0; color: #eef8f2; font-size: 1.15rem; }
+	.rating-heading button { border: 0; background: transparent; color: #8ca197; font-size: 1.4rem; cursor: pointer; }
+	.rating-dialog fieldset { margin: 1.5rem 0 1rem; padding: 0; border: 0; }
+	.rating-dialog legend { margin-bottom: .7rem; color: #b7c8bf; font: 600 .64rem/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+	.star-picker { display: flex; gap: .25rem; }
+	.star-picker button { padding: .15rem; border: 0; background: transparent; color: #49534e; font-size: 2rem; line-height: 1; cursor: pointer; }
+	.star-picker button.chosen { color: #f0cf62; text-shadow: 0 0 12px rgba(240,207,98,.2); }
+	.stale-toggle { display: flex; align-items: center; gap: .65rem; padding: .85rem; border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.025); }
+	.stale-toggle input { width: 1rem; min-height: auto; accent-color: #ff9a9a; }
+	.rating-username { margin-top: 1rem; }
+	.rating-loading { min-height: 9rem; display: grid; place-items: center; color: #829187; }
+	.rating-footer { display: flex; justify-content: flex-end; gap: .65rem; margin-top: 1.25rem; }
+	.rating-footer button { min-height: 2.7rem; padding: 0 1rem; border-radius: 2px; font: 650 .76rem/1 var(--font-display); cursor: pointer; }
 	.empty-state { display: grid; min-height: 13rem; place-content: center; justify-items: center; gap: .75rem; margin: 0; color: #7f897f; font-size: .82rem; text-align: center; }
 	.empty-state p { margin: 0; }
 	.empty-state button { padding: .65rem .8rem; border: 1px solid rgba(211,203,137,.25); background: transparent; color: #d9d199; cursor: pointer; }
@@ -280,6 +499,8 @@
 		footer { align-items: stretch; flex-direction: column; }
 		footer div, footer button { flex: 1; }
 		.listing-card { align-items: stretch; flex-direction: column; }
-		.listing-card > a { text-align: center; }
+		.card-actions { grid-template-columns: 1fr 1fr; }
+		.card-actions button, .card-actions a { min-width: 0; }
+		.listing-actions button { flex: 1; }
 	}
 </style>

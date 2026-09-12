@@ -29,6 +29,16 @@ class JobListingCreate(BaseModel):
         return list(dict.fromkeys(cleaned))
 
 
+class JobRatingCreate(BaseModel):
+    stars: int = Field(ge=1, le=5)
+    stale: bool = False
+
+
+class JobRating(BaseModel):
+    stars: int
+    stale: bool
+
+
 class JobListing(BaseModel):
     id: str
     title: str
@@ -42,5 +52,7 @@ class JobListing(BaseModel):
     status: Literal["active", "possibly_stale", "hidden"]
     useful_votes: int
     stale_votes: int
+    average_rating: float | None = None
+    rating_count: int = 0
     created_at: datetime
     updated_at: datetime

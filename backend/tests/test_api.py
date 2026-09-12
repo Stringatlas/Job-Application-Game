@@ -40,6 +40,7 @@ class FakeIndexDatabase:
     def __init__(self) -> None:
         self.users = FakeIndexCollection()
         self.jobs = FakeIndexCollection()
+        self.job_ratings = FakeIndexCollection()
         self.job_applications = FakeIndexCollection()
         self.rate_limits = FakeIndexCollection()
 
@@ -103,6 +104,90 @@ class FakeJobsCollection:
 class FakeJobListDatabase:
     def __init__(self, documents: list[dict]) -> None:
         self.jobs = FakeJobsCollection(documents)
+
+
+class FakeOwnedJobsCollection:
+    def __init__(self, documents: list[dict]) -> None:
+        self.documents = documents
+
+    def find(self, query: dict) -> FakeJobCursor:
+        matches = [
+            document
+            for document in self.documents
+            if all(document.get(key) == value for key, value in query.items())
+        ]
+        return FakeJobCursor(matches)
+
+    async def find_one(self, query: dict) -> dict | None:
+        return next(
+            (
+                document
+                for document in self.documents
+                if all(document.get(key) == value for key, value in query.items())
+            ),
+            None,
+        )
+
+    async def find_one_and_update(
+        self, query: dict, update: dict, **_options: object
+    ) -> dict | None:
+        for document in self.documents:
+            if all(document.get(key) == value for key, value in query.items()):
+                document.update(update.get("$set", {}))
+                for key, value in update.get("$inc", {}).items():
+                    document[key] = document.get(key, 0) + value
+                return document
+        return None
+
+    async def delete_one(self, query: dict) -> SimpleNamespace:
+        for index, document in enumerate(self.documents):
+            if all(document.get(key) == value for key, value in query.items()):
+                self.documents.pop(index)
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
+
+
+class FakeRatingsCollection:
+    def __init__(self) -> None:
+        self.documents: list[dict] = []
+
+    async def find_one(self, query: dict) -> dict | None:
+        return next(
+            (
+                document
+                for document in self.documents
+                if all(document.get(key) == value for key, value in query.items())
+            ),
+            None,
+        )
+
+    async def find_one_and_update(
+        self, query: dict, update: dict, **_options: object
+    ) -> dict | None:
+        document = await self.find_one(query)
+        previous = document.copy() if document else None
+        if document is None:
+            document = {**query, **update.get("$setOnInsert", {})}
+            self.documents.append(document)
+        document.update(update["$set"])
+        return previous
+
+    async def delete_many(self, query: dict) -> SimpleNamespace:
+        original_count = len(self.documents)
+        self.documents = [
+            document
+            for document in self.documents
+            if not all(document.get(key) == value for key, value in query.items())
+        ]
+        return SimpleNamespace(deleted_count=original_count - len(self.documents))
+
+
+class FakeOwnedJobsDatabase:
+    def __init__(self, profile: dict, documents: list[dict]) -> None:
+        self.users = FakeUsersCollection()
+        self.users.document = profile
+        self.jobs = FakeOwnedJobsCollection(documents)
+        self.job_ratings = FakeRatingsCollection()
 
 
 class FakeRateLimitCollection:
@@ -180,6 +265,14 @@ def test_database_indexes_enforce_unique_references() -> None:
     assert ("auth0_sub", {"unique": True}) in database.users.indexes
     assert ("username_key", {"unique": True}) in database.users.indexes
     assert ("canonical_url", {"unique": True}) in database.jobs.indexes
+    assert (
+        [("submitter_id", 1), ("created_at", -1)],
+        {},
+    ) in database.jobs.indexes
+    assert (
+        [("user_id", 1), ("job_listing_id", 1)],
+        {"unique": True},
+    ) in database.job_ratings.indexes
     assert (
         [("user_id", 1), ("job_listing_id", 1)],
         {"unique": True},
@@ -259,6 +352,96 @@ def test_list_jobs_returns_board_listings() -> None:
 
     assert response.status_code == 200
     assert response.json()[0]["title"] == "Software Engineer Intern"
+
+
+def test_owner_can_manage_and_rate_their_own_jobs() -> None:
+    now = datetime.now(UTC)
+    owner_id = ObjectId()
+    own_job_id = ObjectId()
+    other_job_id = ObjectId()
+    profile = {"_id": owner_id, "auth0_sub": "auth0|job-owner"}
+
+    def job_document(job_id: ObjectId, submitter_id: ObjectId, title: str) -> dict:
+        return {
+            "_id": job_id,
+            "title": title,
+            "company": "Example",
+            "location": "Remote",
+            "remote": True,
+            "external_url": f"https://example.com/jobs/{job_id}",
+            "canonical_url": f"https://example.com/jobs/{job_id}",
+            "description": None,
+            "tags": ["internship"],
+            "submitter_id": submitter_id,
+            "status": "active",
+            "useful_votes": 0,
+            "stale_votes": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    database = FakeOwnedJobsDatabase(
+        profile,
+        [
+            job_document(own_job_id, owner_id, "My original listing"),
+            job_document(other_job_id, ObjectId(), "Someone else's listing"),
+        ],
+    )
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        sub="auth0|job-owner"
+    )
+    app.dependency_overrides[get_ready_database] = lambda: database
+    try:
+        with TestClient(app) as client:
+            mine_response = client.get("/api/jobs/mine")
+            update_response = client.put(
+                f"/api/jobs/{own_job_id}",
+                json={
+                    "title": "My updated listing",
+                    "company": "Example",
+                    "location": "Pittsburgh, PA",
+                    "remote": False,
+                    "external_url": "https://example.com/jobs/updated",
+                    "description": "Updated description",
+                    "tags": ["software"],
+                },
+            )
+            first_rating_response = client.put(
+                f"/api/jobs/{own_job_id}/rating",
+                json={"stars": 4, "stale": True},
+            )
+            changed_rating_response = client.put(
+                f"/api/jobs/{own_job_id}/rating",
+                json={"stars": 2, "stale": False},
+            )
+            my_rating_response = client.get(f"/api/jobs/{own_job_id}/rating")
+            invalid_rating_response = client.put(
+                f"/api/jobs/{own_job_id}/rating",
+                json={"stars": 6, "stale": False},
+            )
+            forbidden_delete_response = client.delete(f"/api/jobs/{other_job_id}")
+            delete_response = client.delete(f"/api/jobs/{own_job_id}")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert mine_response.status_code == 200
+    assert [job["id"] for job in mine_response.json()] == [str(own_job_id)]
+    assert update_response.status_code == 200
+    assert update_response.json()["title"] == "My updated listing"
+    assert update_response.json()["location"] == "Pittsburgh, PA"
+    assert first_rating_response.status_code == 200
+    assert first_rating_response.json()["average_rating"] == 4.0
+    assert first_rating_response.json()["rating_count"] == 1
+    assert first_rating_response.json()["stale_votes"] == 1
+    assert changed_rating_response.status_code == 200
+    assert changed_rating_response.json()["average_rating"] == 2.0
+    assert changed_rating_response.json()["rating_count"] == 1
+    assert changed_rating_response.json()["stale_votes"] == 0
+    assert my_rating_response.json() == {"stars": 2, "stale": False}
+    assert invalid_rating_response.status_code == 422
+    assert forbidden_delete_response.status_code == 404
+    assert delete_response.status_code == 204
+    assert [job["_id"] for job in database.jobs.documents] == [other_job_id]
 
 
 def test_me_requires_bearer_token() -> None:

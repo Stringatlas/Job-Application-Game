@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/public';
 import { auth } from '$lib/auth/auth-store';
-import type { JobListing, JobListingCreate, UserProfile } from './types';
+import type { JobListing, JobListingCreate, JobRating, UserProfile } from './types';
 
 const API_BASE_URL = (env.PUBLIC_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -49,6 +49,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 			Number.isFinite(retryAfter) ? retryAfter : null
 		);
 	}
+	if (response.status === 204) return undefined as T;
 	return (await response.json()) as T;
 }
 
@@ -77,4 +78,30 @@ export function createJobListing(job: JobListingCreate): Promise<JobListing> {
 
 export function listJobListings(): Promise<JobListing[]> {
 	return request<JobListing[]>('/api/jobs');
+}
+
+export function listMyJobListings(): Promise<JobListing[]> {
+	return request<JobListing[]>('/api/jobs/mine');
+}
+
+export function updateJobListing(id: string, job: JobListingCreate): Promise<JobListing> {
+	return request<JobListing>(`/api/jobs/${id}`, {
+		method: 'PUT',
+		body: JSON.stringify(job)
+	});
+}
+
+export function deleteJobListing(id: string): Promise<void> {
+	return request<void>(`/api/jobs/${id}`, { method: 'DELETE' });
+}
+
+export function getMyJobRating(id: string): Promise<JobRating | null> {
+	return request<JobRating | null>(`/api/jobs/${id}/rating`);
+}
+
+export function rateJobListing(id: string, rating: JobRating): Promise<JobListing> {
+	return request<JobListing>(`/api/jobs/${id}/rating`, {
+		method: 'PUT',
+		body: JSON.stringify(rating)
+	});
 }

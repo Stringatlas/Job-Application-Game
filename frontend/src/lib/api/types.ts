@@ -22,6 +22,13 @@ export interface JobListing extends JobListingCreate {
 	status: 'active' | 'possibly_stale' | 'hidden';
 	useful_votes: number;
 	stale_votes: number;
+	average_rating: number | null;
+	rating_count: number;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface JobRating {
+	stars: number;
+	stale: boolean;
 }

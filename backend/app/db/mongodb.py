@@ -44,6 +44,11 @@ async def ensure_indexes(database: AsyncDatabase) -> None:
     await database.users.create_index("username_key", unique=True)
     await database.jobs.create_index("canonical_url", unique=True)
     await database.jobs.create_index([("status", 1), ("created_at", -1)])
+    await database.jobs.create_index([("submitter_id", 1), ("created_at", -1)])
+    await database.job_ratings.create_index(
+        [("user_id", 1), ("job_listing_id", 1)],
+        unique=True,
+    )
     await database.job_applications.create_index(
         [("user_id", 1), ("job_listing_id", 1)],
         unique=True,
