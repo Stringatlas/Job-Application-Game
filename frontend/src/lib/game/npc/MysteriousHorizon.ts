@@ -1,8 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import suitModelSource from '$lib/game/assets/business_suit/scene.gltf?raw';
-import suitBinaryUrl from '$lib/game/assets/business_suit/scene.bin?url';
-import suitBaseColorUrl from '$lib/game/assets/business_suit/textures/uniform_1001_baseColor.png?url';
+import suitModelUrl from '$lib/game/assets/business_suit/scene-optimized.glb?url';
 
 const NAME = 'Mysterious Horizon';
 const CHARACTER_HEIGHT = 1.8;
@@ -119,20 +117,7 @@ export class MysteriousHorizon {
 
 	private async loadSuit(): Promise<void> {
 		try {
-			const modelDefinition = JSON.parse(suitModelSource) as {
-				materials?: Array<{ normalTexture?: unknown }>;
-			};
-			// Remove normal-map references before loading so those files are never fetched.
-			for (const material of modelDefinition.materials ?? []) delete material.normalTexture;
-
-			const manager = new THREE.LoadingManager();
-			manager.setURLModifier((url) => {
-				const filename = decodeURIComponent(url).split('/').pop();
-				if (filename === 'scene.bin') return suitBinaryUrl;
-				if (filename === 'uniform_1001_baseColor.png') return suitBaseColorUrl;
-				return url;
-			});
-			const gltf = await new GLTFLoader(manager).parseAsync(JSON.stringify(modelDefinition), '');
+			const gltf = await new GLTFLoader().loadAsync(suitModelUrl);
 			const suit = gltf.scene;
 			if (this.disposed) {
 				this.disposeObject(suit);
@@ -141,7 +126,10 @@ export class MysteriousHorizon {
 
 			suit.traverse((object) => {
 				if (!(object instanceof THREE.Mesh)) return;
-				object.castShadow = true;
+				// Even optimized, this model is ~52k triangles. A shadow-casting point
+				// light would draw it into all six shadow-cubemap faces every frame.
+				// Keep it fully rendered and lit, but out of the shadow-only passes.
+				object.castShadow = false;
 				object.receiveShadow = true;
 				const materials = Array.isArray(object.material) ? object.material : [object.material];
 				for (const material of materials) {

@@ -11,6 +11,11 @@ import { HorrorPostProcessing } from './rendering/HorrorPostProcessing';
 import type { PlayerState, Vector3State } from './multiplayer/types';
 import { MysteriousHorizon } from './npc/MysteriousHorizon';
 import { speakWithMysteriousHorizon } from '$lib/api/client';
+import clickingClockUrl from './assets/audio/background/clicking_clock.mp3';
+
+const MIN_CLOCK_DELAY_MS = 45_000;
+const MAX_CLOCK_DELAY_MS = 90_000;
+const CLOCK_VOLUME = 0.80;
 
 interface RemoteAvatar {
 	group: THREE.Group;
@@ -43,6 +48,9 @@ export class GameWorld {
 	private npcVoice: HTMLAudioElement | null = null;
 	private npcVoiceUrl: string | null = null;
 	private npcVoiceLoading = false;
+	private readonly clickingClock = new Audio(clickingClockUrl);
+	private clickingClockTimer: ReturnType<typeof setTimeout> | null = null;
+	private clockAudioStarted = false;
 	private readonly remoteAvatars = new Map<string, RemoteAvatar>();
 
 	constructor(
@@ -50,7 +58,9 @@ export class GameWorld {
 		private readonly events: GameWorldEvents
 	) {
 		this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+		// Full-screen post-processing makes render cost scale with the square of DPR.
+		// 1.5 remains crisp on HiDPI displays while avoiding 4x pixel work at DPR 2.
+		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 		this.renderer.shadowMap.enabled = true;
 		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -103,6 +113,9 @@ export class GameWorld {
 			onInteract: this.handleMysteriousHorizonInteraction
 		});
 
+		this.clickingClock.preload = 'auto';
+		this.clickingClock.volume = CLOCK_VOLUME;
+		this.clickingClock.addEventListener('ended', this.scheduleClickingClock);
 		this.renderer.domElement.addEventListener('click', this.handleCanvasClick);
 		window.addEventListener('keydown', this.handleInteractionKey);
 		this.resizeObserver = new ResizeObserver(this.resize);
@@ -181,6 +194,9 @@ export class GameWorld {
 		this.resizeObserver.disconnect();
 		window.removeEventListener('keydown', this.handleInteractionKey);
 		this.renderer.domElement.removeEventListener('click', this.handleCanvasClick);
+		if (this.clickingClockTimer) clearTimeout(this.clickingClockTimer);
+		this.clickingClock.removeEventListener('ended', this.scheduleClickingClock);
+		this.clickingClock.pause();
 		this.controller.dispose();
 		this.interactions.dispose();
 		this.clearNpcVoice();
@@ -229,7 +245,30 @@ export class GameWorld {
 		this.postProcessing.setSize(width, height, this.renderer.getPixelRatio());
 	};
 
-	private handleCanvasClick = (): void => this.controller.requestPointerLock();
+	private handleCanvasClick = (): void => {
+		this.controller.requestPointerLock();
+		if (!this.clockAudioStarted) {
+			this.clockAudioStarted = true;
+			this.playClickingClock();
+		}
+	};
+
+	private playClickingClock = (): void => {
+		if (this.disposed) return;
+		this.clickingClock.currentTime = 0;
+		void this.clickingClock.play().catch(() => {
+			this.scheduleClickingClock();
+		});
+	};
+
+	private scheduleClickingClock = (): void => {
+		if (this.disposed || this.clickingClockTimer) return;
+		const delay = MIN_CLOCK_DELAY_MS + Math.random() * (MAX_CLOCK_DELAY_MS - MIN_CLOCK_DELAY_MS);
+		this.clickingClockTimer = setTimeout(() => {
+			this.clickingClockTimer = null;
+			this.playClickingClock();
+		}, delay);
+	};
 
 	private canOccupy = (position: THREE.Vector3): boolean => {
 		const playerRadius = 0.28;
@@ -266,7 +305,7 @@ export class GameWorld {
 	private handleMysteriousHorizonInteraction = (): void => {
 		if (this.npcVoiceLoading || this.npcVoice) return;
 		this.npcVoiceLoading = true;
-		this.interactions.updatePrompt('mysterious-horizon', 'Mysterious Horizon is listening…');
+		this.interactions.updatePrompt('mysterious-horizon', 'Mysterious Horizon is thinking…');
 		void speakWithMysteriousHorizon()
 			.then((speech) => {
 				if (this.disposed) return;
