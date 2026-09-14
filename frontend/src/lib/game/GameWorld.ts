@@ -4,7 +4,6 @@ import { FirstPersonController } from './player/FirstPersonController';
 import {
 	createOfficeScene,
 	DOORWAY_WIDTH,
-	OFFICE_BOUNDS,
 	SECURE_DOOR_Z
 } from './scene/createOfficeScene';
 import { HorrorPostProcessing } from './rendering/HorrorPostProcessing';
@@ -16,6 +15,9 @@ import clickingClockUrl from './assets/audio/background/clicking_clock.mp3';
 const MIN_CLOCK_DELAY_MS = 45_000;
 const MAX_CLOCK_DELAY_MS = 90_000;
 const CLOCK_VOLUME = 0.80;
+const MAX_RENDER_SCALE = 0.8;
+const MIN_RENDER_SCALE = 0.6;
+const FPS_SAMPLE_SECONDS = 0.5;
 
 interface RemoteAvatar {
 	group: THREE.Group;
@@ -29,6 +31,7 @@ export interface GameWorldEvents {
 	onLoginKioskUse: () => void;
 	onJobBoardUse: () => void;
 	onPointerLockChange: (locked: boolean) => void;
+	onFpsChange: (fps: number) => void;
 }
 
 export class GameWorld {
@@ -52,17 +55,28 @@ export class GameWorld {
 	private clickingClockTimer: ReturnType<typeof setTimeout> | null = null;
 	private clockAudioStarted = false;
 	private readonly remoteAvatars = new Map<string, RemoteAvatar>();
+	private renderScale = MAX_RENDER_SCALE;
+	private fpsFrames = 0;
+	private fpsElapsedSeconds = 0;
+	private performanceWarmupSeconds = 0;
+	private slowFpsWindows = 0;
+	private fastFpsWindows = 0;
 
 	constructor(
 		private readonly container: HTMLElement,
 		private readonly events: GameWorldEvents
 	) {
-		this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-		// Full-screen post-processing makes render cost scale with the square of DPR.
-		// 1.5 remains crisp on HiDPI displays while avoiding 4x pixel work at DPR 2.
-		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-		this.renderer.shadowMap.enabled = true;
-		this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+		this.renderer = new THREE.WebGLRenderer({
+			antialias: false,
+			alpha: false,
+			depth: true,
+			stencil: false,
+			powerPreference: 'high-performance'
+		});
+		// The grain pass hides sub-pixel edges, so rendering below native DPR saves substantial fill rate.
+		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1) * this.renderScale);
+		// Realtime point-light shadows require six shadow renders per light and caused large frame spikes.
+		this.renderer.shadowMap.enabled = false;
 		this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 		this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
 		this.renderer.toneMappingExposure = 1.20;
@@ -70,7 +84,7 @@ export class GameWorld {
 		this.renderer.domElement.setAttribute('aria-label', 'First-person office scene');
 		this.container.appendChild(this.renderer.domElement);
 
-		this.camera = new THREE.PerspectiveCamera(72, 1, 0.08, 80);
+		this.camera = new THREE.PerspectiveCamera(72, 1, 0.08, 60);
 		this.camera.position.set(0, 1.65, 8.15);
 		sessionStorage.removeItem('jag:spawn');
 		this.office = createOfficeScene();
@@ -80,7 +94,7 @@ export class GameWorld {
 		this.controller = new FirstPersonController(
 			this.camera,
 			this.renderer.domElement,
-			OFFICE_BOUNDS,
+			this.office.worldBounds,
 			events.onPointerLockChange,
 			this.canOccupy
 		);
@@ -214,7 +228,7 @@ export class GameWorld {
 		const delta = this.clock.getDelta();
 		this.controller.update(delta);
 		this.interactions.update(this.camera);
-		this.office.updateLights(this.clock.elapsedTime);
+		this.office.update(this.camera.position, this.clock.elapsedTime);
 		this.mysteriousHorizon.update(delta, this.clock.elapsedTime);
 		const doorTarget = this.authenticated ? 1 : 0;
 		this.doorOpenProgress = THREE.MathUtils.damp(
@@ -234,6 +248,7 @@ export class GameWorld {
 			);
 		}
 		this.postProcessing.render(this.clock.elapsedTime);
+		this.updatePerformance(delta);
 	};
 
 	private resize = (): void => {
@@ -244,6 +259,42 @@ export class GameWorld {
 		this.renderer.setSize(width, height, false);
 		this.postProcessing.setSize(width, height, this.renderer.getPixelRatio());
 	};
+
+	private updatePerformance(deltaSeconds: number): void {
+		if (deltaSeconds > 0.25) {
+			this.fpsFrames = 0;
+			this.fpsElapsedSeconds = 0;
+			return;
+		}
+		this.fpsFrames += 1;
+		this.fpsElapsedSeconds += deltaSeconds;
+		this.performanceWarmupSeconds += deltaSeconds;
+		if (this.fpsElapsedSeconds < FPS_SAMPLE_SECONDS) return;
+
+		const fps = this.fpsFrames / this.fpsElapsedSeconds;
+		this.events.onFpsChange(fps);
+		this.fpsFrames = 0;
+		this.fpsElapsedSeconds = 0;
+		if (this.performanceWarmupSeconds < 2) return;
+
+		this.slowFpsWindows = fps < 50 ? this.slowFpsWindows + 1 : 0;
+		this.fastFpsWindows = fps > 58 ? this.fastFpsWindows + 1 : 0;
+		if (this.slowFpsWindows >= 2 && this.renderScale > MIN_RENDER_SCALE) {
+			this.setRenderScale(Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1));
+			this.slowFpsWindows = 0;
+			this.fastFpsWindows = 0;
+		} else if (this.fastFpsWindows >= 10 && this.renderScale < MAX_RENDER_SCALE) {
+			this.setRenderScale(Math.min(MAX_RENDER_SCALE, this.renderScale + 0.05));
+			this.fastFpsWindows = 0;
+		}
+	}
+
+	private setRenderScale(scale: number): void {
+		if (scale === this.renderScale) return;
+		this.renderScale = scale;
+		this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1) * scale);
+		this.resize();
+	}
 
 	private handleCanvasClick = (): void => {
 		this.controller.requestPointerLock();
@@ -272,13 +323,7 @@ export class GameWorld {
 
 	private canOccupy = (position: THREE.Vector3): boolean => {
 		const playerRadius = 0.28;
-		const hitsWall = this.office.wallColliders.some((wall) =>
-			position.x + playerRadius > wall.minX &&
-			position.x - playerRadius < wall.maxX &&
-			position.z + playerRadius > wall.minZ &&
-			position.z - playerRadius < wall.maxZ
-		);
-		if (hitsWall) return false;
+		if (this.office.collidesWithWall(position, playerRadius)) return false;
 
 		if (
 			this.doorOpenProgress < 0.82 &&

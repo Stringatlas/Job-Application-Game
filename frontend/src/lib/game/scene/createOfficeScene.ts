@@ -1,31 +1,44 @@
 import * as THREE from 'three';
-import carpetUrl from '$lib/game/assets/textures/carpet.webp';
-import ceilingUrl from '$lib/game/assets/textures/ceiling_tiles_color.png';
-import wallpaperUrl from '$lib/game/assets/textures/wallpaper.png';
-import wallpaper2Url from '$lib/game/assets/textures/wallpaper2.png';
-import woodUrl from '$lib/game/assets/textures/wood.jpeg';
+import carpetUrl from '$lib/game/assets/textures/carpet-low.jpeg';
+import ceilingUrl from '$lib/game/assets/textures/ceiling_tiles_color-low.jpeg';
+import wallpaperUrl from '$lib/game/assets/textures/wallpaper-low.jpeg';
+import wallpaper2Url from '$lib/game/assets/textures/wallpaper2-low.jpeg';
+import woodUrl from '$lib/game/assets/textures/wood-low.jpeg';
+import {
+	RoomChunkManager,
+	type CollisionBox,
+	type ProceduralWorldBounds
+} from '../rooms/RoomChunkManager';
+import {
+	assertProceduralGenerationDeterminism,
+	generateProceduralRoomGraph,
+	WORLD_SEED
+} from '../rooms/ProceduralRoomGraph';
 import { OfficeLight } from './OfficeLight';
 import {
+	ALL_SPACES,
 	CEILING_HEIGHT,
 	createLightPlacements,
 	createOfficeWalls,
 	DOORWAY_WIDTH,
 	LAYOUT_EXTENTS,
+	OPENINGS,
+	ROOMS,
 	SECURE_DOOR_Z,
 	WALL_THICKNESS
 } from './OfficeLayout';
 
 export { DOORWAY_WIDTH, OFFICE_BOUNDS, SECURE_DOOR_Z } from './OfficeLayout';
 
-export interface CollisionBox { minX: number; maxX: number; minZ: number; maxZ: number; }
 export interface OfficeScene {
 	scene: THREE.Scene;
 	loginKiosk: THREE.Group;
 	jobBoard: THREE.Group;
 	jobBoardMaterial: THREE.MeshStandardMaterial;
 	closetDoor: THREE.Group;
-	wallColliders: CollisionBox[];
-	updateLights: (elapsedSeconds: number) => void;
+	worldBounds: ProceduralWorldBounds;
+	collidesWithWall: (position: THREE.Vector3, radius: number) => boolean;
+	update: (playerPosition: THREE.Vector3, elapsedSeconds: number) => void;
 	dispose: () => void;
 }
 
@@ -48,7 +61,7 @@ function loadRepeatingTexture(url: string, repeat: [number, number], track: <T e
 	texture.wrapS = THREE.RepeatWrapping;
 	texture.wrapT = THREE.RepeatWrapping;
 	texture.repeat.set(...repeat);
-	texture.anisotropy = 8;
+	texture.anisotropy = 2;
 	return texture;
 }
 
@@ -113,9 +126,10 @@ function makeDoorSignTexture(): THREE.CanvasTexture {
 }
 
 export function createOfficeScene(): OfficeScene {
+	if (import.meta.env.DEV) assertProceduralGenerationDeterminism();
 	const scene = new THREE.Scene();
-	scene.background = new THREE.Color('#12130d');
-	scene.fog = new THREE.FogExp2('#2e3020', 0.016);
+	scene.background = new THREE.Color('#29250d');
+	scene.fog = new THREE.FogExp2('#70651f', 0.026);
 	const disposable: Array<THREE.BufferGeometry | THREE.Material | THREE.Texture> = [];
 	const track = <T extends THREE.BufferGeometry | THREE.Material | THREE.Texture>(resource: T): T => { disposable.push(resource); return resource; };
 
@@ -125,22 +139,35 @@ export function createOfficeScene(): OfficeScene {
 	const ceilingTexture = loadRepeatingTexture(ceilingUrl, [9, 8], track);
 	const woodTexture = loadRepeatingTexture(woodUrl, [1.5, 1], track);
 	const wallMaterials = {
-		primary: track(new THREE.MeshStandardMaterial({ map: primaryWallpaper, color: '#bbb77a', roughness: 0.94 })),
-		secondary: track(new THREE.MeshStandardMaterial({ map: secondaryWallpaper, color: '#969256', roughness: 0.97 }))
+		primary: track(new THREE.MeshLambertMaterial({ map: primaryWallpaper, color: '#bbb77a' })),
+		secondary: track(new THREE.MeshLambertMaterial({ map: secondaryWallpaper, color: '#969256' }))
 	};
+	const floorMaterial = track(new THREE.MeshLambertMaterial({ map: carpetTexture, color: '#77704a' }));
+	const ceilingMaterial = track(new THREE.MeshLambertMaterial({ map: ceilingTexture, color: '#aaa77a' }));
+	const fixtureMaterial = track(new THREE.MeshBasicMaterial({
+		color: '#ddd79b',
+		toneMapped: false
+	}));
 
 	const layoutWidth = LAYOUT_EXTENTS.maxX - LAYOUT_EXTENTS.minX;
 	const layoutDepth = LAYOUT_EXTENTS.maxZ - LAYOUT_EXTENTS.minZ;
 	const layoutCenterX = (LAYOUT_EXTENTS.minX + LAYOUT_EXTENTS.maxX) / 2;
 	const layoutCenterZ = (LAYOUT_EXTENTS.minZ + LAYOUT_EXTENTS.maxZ) / 2;
-	const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(layoutWidth, layoutDepth)), track(new THREE.MeshStandardMaterial({ map: carpetTexture, color: '#77704a', roughness: 1 })));
+	const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(layoutWidth, layoutDepth)), floorMaterial);
 	floor.rotation.x = -Math.PI / 2; floor.position.set(layoutCenterX, 0, layoutCenterZ); floor.receiveShadow = true; scene.add(floor);
-	const ceiling = new THREE.Mesh(track(new THREE.PlaneGeometry(layoutWidth, layoutDepth)), track(new THREE.MeshStandardMaterial({ map: ceilingTexture, color: '#aaa77a', roughness: 1 })));
+	const ceiling = new THREE.Mesh(track(new THREE.PlaneGeometry(layoutWidth, layoutDepth)), ceilingMaterial);
 	ceiling.rotation.x = Math.PI / 2; ceiling.position.set(layoutCenterX, CEILING_HEIGHT, layoutCenterZ); ceiling.receiveShadow = true; scene.add(ceiling);
 
 	const wallGeometry = track(new THREE.BoxGeometry(1, CEILING_HEIGHT, WALL_THICKNESS));
 	const wallColliders: CollisionBox[] = [];
-	for (const spec of createOfficeWalls()) {
+	const proceduralGraph = generateProceduralRoomGraph();
+	const proceduralSpaces = [...proceduralGraph.rooms, ...proceduralGraph.hallways];
+	const coreIds = new Set(ROOMS.map((space) => space.id));
+	for (const spec of createOfficeWalls(
+		[...ALL_SPACES, ...proceduralSpaces],
+		[...OPENINGS, ...proceduralGraph.openings],
+		coreIds
+	)) {
 		const length = spec.to - spec.from;
 		const wall = new THREE.Mesh(wallGeometry, wallMaterials[spec.finish ?? 'primary']);
 		if (spec.axis === 'x') {
@@ -192,8 +219,10 @@ export function createOfficeScene(): OfficeScene {
 	const monitor = new THREE.Mesh(track(new THREE.BoxGeometry(1.25, 0.85, 0.18)), track(new THREE.MeshStandardMaterial({ color: '#171710', roughness: 0.55 })));
 	monitor.position.set(3.1, 1.56, -2.62); monitor.castShadow = true; scene.add(monitor);
 
-	scene.add(new THREE.HemisphereLight('#d8d4a2', '#343525', 1.1));
-	const lights = createLightPlacements().map((placement, index) => new OfficeLight({
+	scene.add(new THREE.HemisphereLight('#d8d4a2', '#343525', 1.25));
+	// Low ambient fill keeps wallpaper readable between sparse procedural fixtures.
+	scene.add(new THREE.AmbientLight('#d8cf8a', 0.24));
+	const lights = createLightPlacements(ROOMS, WORLD_SEED).map((placement, index) => new OfficeLight({
 		position: [placement.x, CEILING_HEIGHT - 0.25, placement.z],
 		intensity: placement.intensity,
 		range: placement.range,
@@ -203,10 +232,46 @@ export function createOfficeScene(): OfficeScene {
 		castShadow: index === 2
 	}));
 	for (const fixture of lights) scene.add(fixture.group);
+	const chunkManager = new RoomChunkManager(
+		scene,
+		proceduralGraph,
+		{
+			floor: floorMaterial,
+			ceiling: ceilingMaterial,
+			walls: wallMaterials,
+			fixture: fixtureMaterial
+		},
+		{
+			floor: track(new THREE.PlaneGeometry(1, 1)),
+			ceiling: track(new THREE.PlaneGeometry(1, 1)),
+			wall: wallGeometry,
+			fixture: track(new THREE.PlaneGeometry(1, 0.5))
+		}
+	);
 
 	return {
-		scene, loginKiosk, jobBoard, jobBoardMaterial, closetDoor, wallColliders,
-		updateLights: (elapsedSeconds) => lights.forEach((light) => light.update(elapsedSeconds)),
-		dispose: () => { lights.forEach((light) => light.dispose()); disposable.forEach((resource) => resource.dispose()); }
+		scene,
+		loginKiosk,
+		jobBoard,
+		jobBoardMaterial,
+		closetDoor,
+		worldBounds: chunkManager.bounds,
+		collidesWithWall: (position, radius) => {
+			const collides = (wall: CollisionBox) =>
+				position.x + radius > wall.minX &&
+				position.x - radius < wall.maxX &&
+				position.z + radius > wall.minZ &&
+				position.z - radius < wall.maxZ;
+			return wallColliders.some(collides) || chunkManager.getWallColliders().some(collides);
+		},
+		update: (playerPosition, elapsedSeconds) => {
+			lights.forEach((light) => light.update(elapsedSeconds));
+			chunkManager.update(playerPosition, elapsedSeconds);
+		},
+		dispose: () => {
+			chunkManager.dispose();
+			lights.forEach((light) => light.dispose());
+			disposable.forEach((resource) => resource.dispose());
+		}
 	};
 }

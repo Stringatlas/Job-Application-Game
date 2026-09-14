@@ -1,3 +1,5 @@
+import { seededValue } from '../rooms/SeededRandom';
+
 export interface RectSpace {
 	id: string;
 	x: number;
@@ -46,57 +48,15 @@ export const DOORWAY_WIDTH = 2.2;
 export const SECURE_DOOR_Z = 5.15;
 
 export const ROOMS: RoomDefinition[] = [
-	// The two original spaces remain unchanged.
+	// The original playable spaces are the immutable anchor for the generated world.
 	{ id: 'main-office', kind: 'room', x: -7, z: -9.5, width: 14, depth: 14.65 },
-	{ id: 'starting-room', kind: 'room', x: -2.4, z: 5.15, width: 4.8, depth: 4.85 },
-
-	{ id: 'west-records', kind: 'room', x: -17, z: -9.5, width: 5, depth: 7.5, finish: 'secondary' },
-	{ id: 'west-lounge', kind: 'room', x: -17, z: -2, width: 5, depth: 7.15 },
-	{ id: 'east-archive', kind: 'room', x: 12, z: -9.5, width: 5, depth: 7.5, finish: 'secondary' },
-	{ id: 'east-meeting', kind: 'room', x: 12, z: -2, width: 5, depth: 7.15 },
-	{ id: 'south-storage', kind: 'room', x: -5, z: -17, width: 12, depth: 5, finish: 'secondary' },
-	{ id: 'north-gallery', kind: 'room', x: -15, z: 15.5, width: 30, depth: 3.5, finish: 'secondary' }
+	{ id: 'starting-room', kind: 'room', x: -2.4, z: 5.15, width: 4.8, depth: 4.85 }
 ];
 
-export const HALLWAYS: HallwayDefinition[] = [
-	{ id: 'west-lower-hall', kind: 'hallway', x: -12, z: -7, width: 5, depth: 2.5, finish: 'secondary' },
-	{ id: 'west-upper-hall', kind: 'hallway', x: -12, z: 1, width: 5, depth: 2.5, finish: 'secondary' },
-	{ id: 'east-lower-hall', kind: 'hallway', x: 7, z: -7, width: 5, depth: 2.5, finish: 'secondary' },
-	{ id: 'east-upper-hall', kind: 'hallway', x: 7, z: 1, width: 5, depth: 2.5, finish: 'secondary' },
-	{ id: 'south-west-hall', kind: 'hallway', x: 1.2, z: -12, width: 2.5, depth: 2.5, finish: 'secondary' },
-	{ id: 'south-east-hall', kind: 'hallway', x: 4.5, z: -12, width: 2.5, depth: 2.5, finish: 'secondary' },
-	{ id: 'west-north-hall', kind: 'hallway', x: -15, z: 5.15, width: 3, depth: 10.35, finish: 'secondary' },
-	{ id: 'east-north-hall', kind: 'hallway', x: 12, z: 5.15, width: 3, depth: 10.35, finish: 'secondary' }
-];
+export const HALLWAYS: HallwayDefinition[] = [];
 
 export const OPENINGS: OpeningDefinition[] = [
-	{ id: 'secure-door', between: ['main-office', 'starting-room'], width: DOORWAY_WIDTH },
-
-	// West room loop.
-	{ id: 'main-to-west-lower', between: ['main-office', 'west-lower-hall'] },
-	{ id: 'west-lower-to-records', between: ['west-lower-hall', 'west-records'] },
-	{ id: 'west-records-to-lounge', between: ['west-records', 'west-lounge'] },
-	{ id: 'west-lounge-to-upper', between: ['west-lounge', 'west-upper-hall'] },
-	{ id: 'west-upper-to-main', between: ['west-upper-hall', 'main-office'] },
-
-	// East room loop.
-	{ id: 'main-to-east-lower', between: ['main-office', 'east-lower-hall'] },
-	{ id: 'east-lower-to-archive', between: ['east-lower-hall', 'east-archive'] },
-	{ id: 'east-archive-to-meeting', between: ['east-archive', 'east-meeting'] },
-	{ id: 'east-meeting-to-upper', between: ['east-meeting', 'east-upper-hall'] },
-	{ id: 'east-upper-to-main', between: ['east-upper-hall', 'main-office'] },
-
-	// Two entrances turn the southern room into another circuit.
-	{ id: 'main-to-south-west', between: ['main-office', 'south-west-hall'] },
-	{ id: 'south-west-to-storage', between: ['south-west-hall', 'south-storage'] },
-	{ id: 'storage-to-south-east', between: ['south-storage', 'south-east-hall'] },
-	{ id: 'south-east-to-main', between: ['south-east-hall', 'main-office'] },
-
-	// The northern gallery reconnects both wings into a large perimeter loop.
-	{ id: 'west-lounge-to-north', between: ['west-lounge', 'west-north-hall'] },
-	{ id: 'west-north-to-gallery', between: ['west-north-hall', 'north-gallery'] },
-	{ id: 'gallery-to-east-north', between: ['north-gallery', 'east-north-hall'] },
-	{ id: 'east-north-to-meeting', between: ['east-north-hall', 'east-meeting'] }
+	{ id: 'secure-door', between: ['main-office', 'starting-room'], width: DOORWAY_WIDTH }
 ];
 
 export const ALL_SPACES: Array<RoomDefinition | HallwayDefinition> = [...ROOMS, ...HALLWAYS];
@@ -189,10 +149,14 @@ function mergeCollinearWalls(walls: WallSpec[]): WallSpec[] {
 	return merged;
 }
 
-export function createOfficeWalls(): WallSpec[] {
-	const spacesById = new Map(ALL_SPACES.map((space) => [space.id, space]));
+export function createOfficeWalls(
+	spaces: Array<RoomDefinition | HallwayDefinition> = ALL_SPACES,
+	openingDefinitions: OpeningDefinition[] = OPENINGS,
+	targetSpaceIds?: ReadonlySet<string>
+): WallSpec[] {
+	const spacesById = new Map(spaces.map((space) => [space.id, space]));
 	const openingsBySpace = new Map<string, ResolvedOpening[]>();
-	for (const definition of OPENINGS) {
+	for (const definition of openingDefinitions) {
 		const a = spacesById.get(definition.between[0]);
 		const b = spacesById.get(definition.between[1]);
 		if (!a || !b) throw new Error(`Opening ${definition.id} references an unknown space`);
@@ -202,7 +166,8 @@ export function createOfficeWalls(): WallSpec[] {
 	}
 
 	const walls: WallSpec[] = [];
-	for (const space of ALL_SPACES) {
+	for (const space of spaces) {
+		if (targetSpaceIds && !targetSpaceIds.has(space.id)) continue;
 		const finish = space.finish ?? 'primary';
 		const spaceOpenings = openingsBySpace.get(space.id) ?? [];
 		const sides: Array<{ side: Side; axis: WallSpec['axis']; fixed: number; from: number; to: number }> = [
@@ -214,16 +179,33 @@ export function createOfficeWalls(): WallSpec[] {
 		for (const side of sides) {
 			const openings = spaceOpenings.filter((opening) => opening.side === side.side);
 			for (const [from, to] of subtractOpenings(side.from, side.to, openings)) {
-				walls.push({ axis: side.axis, fixed: side.fixed, from, to, finish });
+				// Horizontal walls own every junction, including doorway corners. Vertical
+				// walls terminate against their inside faces so room and hallway frames align.
+				const joinedFrom =
+					from + (side.axis === 'x' ? -WALL_THICKNESS / 2 : WALL_THICKNESS / 2);
+				const joinedTo =
+					to + (side.axis === 'x' ? WALL_THICKNESS / 2 : -WALL_THICKNESS / 2);
+				if (joinedTo > joinedFrom) {
+					walls.push({
+						axis: side.axis,
+						fixed: side.fixed,
+						from: joinedFrom,
+						to: joinedTo,
+						finish
+					});
+				}
 			}
 		}
 	}
 	return mergeCollinearWalls(walls);
 }
 
-export function createLightPlacements(maxSpacing = 8): LightPlacement[] {
-	let seed = 1;
-	return ALL_SPACES.flatMap((space) => {
+export function createLightPlacements(
+	spaces: Array<RoomDefinition | HallwayDefinition> = ALL_SPACES,
+	worldSeed = 1,
+	maxSpacing = 8
+): LightPlacement[] {
+	return spaces.flatMap((space) => {
 		const columns = Math.max(1, Math.ceil(space.width / maxSpacing));
 		const rows = Math.max(1, Math.ceil(space.depth / maxSpacing));
 		const cellWidth = space.width / columns;
@@ -238,7 +220,9 @@ export function createLightPlacements(maxSpacing = 8): LightPlacement[] {
 					z: space.z + ((row + 0.5) * space.depth) / rows,
 					intensity: space.kind === 'hallway' ? 13 : 15,
 					range: space.kind === 'hallway' ? 7 : 8.5,
-					seed: seed++,
+					seed: 1 + Math.floor(
+						seededValue(worldSeed, `light:${space.id}:${column}:${row}`) * 97
+					),
 					fixtureLength: Math.min(2.45, Math.max(1.4, availableLength - 0.5)),
 					rotation: runsAlongX ? 0 : Math.PI / 2
 				});

@@ -24,18 +24,19 @@ const horrorShader = {
 		varying vec2 vUv;
 
 		float random(vec2 value) {
-			return fract(sin(dot(value, vec2(12.9898, 78.233))) * 43758.5453);
+			// Interleaved gradient noise avoids the expensive per-pixel sine hash.
+			return fract(52.9829189 * fract(dot(value, vec2(0.06711056, 0.00583715))));
 		}
 
 		void main() {
 			vec2 centered = vUv - 0.5;
 			float edge = smoothstep(0.25, 0.76, dot(centered, centered) * 1.8);
-			float grain = random(vUv * resolution + vec2(time * 83.0, time * 29.0)) - 0.5;
-			float coarseGrain = random(floor(vUv * resolution * 0.35) + vec2(time * 41.0)) - 0.5;
+			float frame = floor(time * 24.0);
+			float grain = random(vUv * resolution + vec2(frame, frame * 0.37)) - 0.5;
+			float coarseGrain = random(floor(vUv * resolution * 0.35) + vec2(frame * 0.61)) - 0.5;
 			float scanline = sin((vUv.y * resolution.y + time * 12.0) * 1.65) * 0.013;
-			float rollingLine = sin((vUv.y + time * 0.09) * 34.0) * 0.001;
 			vec3 color = texture2D(tDiffuse, vUv).rgb;
-			color += grain * 0.045 + coarseGrain * 0.008 + scanline + rollingLine;
+			color += grain * 0.045 + coarseGrain * 0.008 + scanline;
 			color *= 1.0 - edge * 0.22;
 			color = mix(color, color * vec3(0.94, 0.96, 0.88), 0.1);
 			gl_FragColor = vec4(color, 1.0);

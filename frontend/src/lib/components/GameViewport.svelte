@@ -28,6 +28,7 @@
 	let showOnboarding = $state(false);
 	let npcDialogue = $state<string | null>(null);
 	let streamedDialogue = $state('');
+	let fps = $state(0);
 	let multiplayer: MultiplayerClient | null = null;
 	let dialogueInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -76,7 +77,8 @@
 			onNpcDialogue: handleNpcDialogue,
 			onLoginKioskUse: onLoginRequested,
 			onJobBoardUse: onJobBoardRequested,
-			onPointerLockChange: (locked) => (pointerLocked = locked)
+			onPointerLockChange: (locked) => (pointerLocked = locked),
+			onFpsChange: (nextFps) => (fps = nextFps)
 		});
 		multiplayer = new MultiplayerClient(
 			() => world?.getLocalTransform() ?? { position: { x: 0, y: 1.65, z: 8.15 }, rotation: 0 },
@@ -109,6 +111,10 @@
 </script>
 
 <div class="viewport" bind:this={mountNode}>
+	<!-- <div class="fps-counter" aria-label={`${Math.round(fps)} frames per second`}>
+		{Math.round(fps)} FPS
+	</div> -->
+
 	{#if showOnboarding}
 		<div class="onboarding-pop" role="status" aria-label="W A S D to move. This site plays audio.">
 			<div class="move-hint" aria-hidden="true">
@@ -166,6 +172,17 @@
 		background: #17160d;
 	}
 	.viewport :global(.game-canvas) { display: block; width: 100%; height: 100%; }
+	.fps-counter {
+		position: absolute;
+		z-index: 8;
+		top: .75rem;
+		right: .85rem;
+		color: #fff06a;
+		font: 700 .78rem/1 var(--font-mono);
+		letter-spacing: .08em;
+		text-shadow: 0 1px 2px #000, 0 0 8px rgba(255, 226, 65, .42);
+		pointer-events: none;
+	}
 	.onboarding-pop {
 		position: absolute;
 		z-index: 4;
